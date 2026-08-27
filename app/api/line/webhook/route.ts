@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
-import { verifyLineSignature, sendLineReply, parseTaskInput, parseEventInput, LineMessage } from '@/lib/line'
+import { verifyLineSignature, sendLineReply, parseTaskInput, parseEventInput } from '@/lib/line'
+import { createEventsFlex, createStatusFlex, createTasksFlex } from '@/lib/line-flex'
 import { analyzeUserMessageWithGemini } from '@/lib/gemini'
 import { getSupabaseAdmin } from '@/lib/supabase-admin'
 import crypto from 'crypto'
@@ -165,20 +166,7 @@ export async function POST(request: Request) {
             .eq('user_id', userId)
             .eq('completed', false)
 
-          await sendLineReply(replyToken, [
-            {
-              type: 'text',
-              text: `🟢 บัญชีเชื่อมต่อเรียบร้อยแล้ว!\n🤖 Study Manager.koko ออนไลน์\n📊 งานค้างอยู่ทั้งหมด: ${count ?? 0} รายการ\nพิมพ์ /list หรือถามบอทได้เลยครับ`,
-              quickReply: {
-                items: [
-                  {
-                    type: 'action',
-                    action: { type: 'message', label: '📋 ดูรายการงาน', text: '/list' },
-                  },
-                ],
-              },
-            },
-          ])
+          await sendLineReply(replyToken, [createStatusFlex(count)])
           continue
         }
 
@@ -364,49 +352,7 @@ export async function POST(request: Request) {
             .order('due_date', { ascending: true })
             .limit(10)
 
-          if (taskError || !tasks || tasks.length === 0) {
-            await sendLineReply(replyToken, [
-              {
-                type: 'text',
-                text: '🎉 ยอดเยี่ยมมาก! คุณไม่มีงานที่ค้างอยู่เลยในขณะนี้\nพิมพ์สั่งงานใหม่หรือบอกสิ่งที่ต้องทำได้เลยครับ ✨',
-                quickReply: {
-                  items: [
-                    {
-                      type: 'action',
-                      action: { type: 'message', label: '➕ เพิ่ม To-Do', text: '/todo ' },
-                    },
-                  ],
-                },
-              },
-            ])
-            continue
-          }
-
-          let responseText = `📋 รายการ To-Do ของคุณ (${tasks.length} รายการ):\n`
-          tasks.forEach((t, idx) => {
-            const priorityBadge = t.priority === 3 ? '🔴' : t.priority === 2 ? '🟡' : '🟢'
-            const dueText = t.due_date ? ` (📅 ${t.due_date})` : ''
-            const subjectTag = t.subject && t.subject !== 'General' ? ` [${t.subject}]` : ''
-            responseText += `\n${idx + 1}. ${priorityBadge} ${t.title}${subjectTag}${dueText}`
-          })
-          responseText += `\n\n💡 พิมพ์ "ทำ [ชื่องาน] เสร็จแล้ว" หรือกดปุ่มด้านล่างได้เลย`
-
-          await sendLineReply(replyToken, [
-            {
-              type: 'text',
-              text: responseText,
-              quickReply: {
-                items: tasks.slice(0, 5).map((t, idx) => ({
-                  type: 'action',
-                  action: {
-                    type: 'message',
-                    label: `✅ เสร็จ ${idx + 1}`,
-                    text: `/done ${t.title}`,
-                  },
-                })),
-              },
-            },
-          ])
+          await sendLineReply(replyToken, [createTasksFlex(taskError ? [] : (tasks ?? []))])
           continue
         }
 
@@ -420,61 +366,7 @@ export async function POST(request: Request) {
             .order('event_date', { ascending: true })
             .limit(10)
 
-          if (eventError || !eventsList || eventsList.length === 0) {
-            await sendLineReply(replyToken, [
-              {
-                type: 'text',
-                text: '🗓️ คุณยังไม่มีวันสำคัญหรือนัดหมายที่บันทึกไว้ในเร็วๆ นี้\nพิมพ์บอกวันสำคัญได้เลย เช่น "วันที่ 15 กันยา มีสอบฟิสิกส์"',
-                quickReply: {
-                  items: [
-                    {
-                      type: 'action',
-                      action: { type: 'message', label: '➕ เพิ่มวันสำคัญ', text: '/event ' },
-                    },
-                    {
-                      type: 'action',
-                      action: { type: 'message', label: '📋 ดู To-Do', text: '/list' },
-                    },
-                  ],
-                },
-              },
-            ])
-            continue
-          }
-
-          const typeEmojis: Record<string, string> = {
-            exam: '📝 [สอบ]',
-            competition: '🏆 [แข่ง]',
-            project: '📂 [โปรเจกต์]',
-            important: '📌 [สำคัญ]',
-          }
-
-          let responseText = `📅 วันสำคัญ & นัดหมายของคุณ (${eventsList.length} รายการ):\n`
-          eventsList.forEach((ev, idx) => {
-            const emojiBadge = typeEmojis[ev.type] || '📌 [สำคัญ]'
-            const daysLeft = Math.round((new Date(`${ev.event_date}T00:00:00`).getTime() - new Date(`${today}T00:00:00`).getTime()) / 86400000)
-            const daysText = daysLeft === 0 ? ' (วันนี้!)' : daysLeft === 1 ? ' (พรุ่งนี้)' : ` (อีก ${daysLeft} วัน)`
-            responseText += `\n${idx + 1}. ${emojiBadge} ${ev.title}\n   📅 ${ev.event_date}${daysText}`
-          })
-
-          await sendLineReply(replyToken, [
-            {
-              type: 'text',
-              text: responseText,
-              quickReply: {
-                items: [
-                  {
-                    type: 'action',
-                    action: { type: 'message', label: '➕ เพิ่มวันสำคัญ', text: '/event ' },
-                  },
-                  {
-                    type: 'action',
-                    action: { type: 'message', label: '📋 ดู To-Do', text: '/list' },
-                  },
-                ],
-              },
-            },
-          ])
+          await sendLineReply(replyToken, [createEventsFlex(eventError ? [] : (eventsList ?? []))])
           continue
         }
 

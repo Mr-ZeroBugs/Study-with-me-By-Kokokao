@@ -16,7 +16,13 @@ export interface LineTextMessage {
   }
 }
 
-export type LineMessage = LineTextMessage
+export interface LineFlexMessage {
+  type: 'flex'
+  altText: string
+  contents: Record<string, unknown>
+}
+
+export type LineMessage = LineTextMessage | LineFlexMessage
 
 const LINE_CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET || ''
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN || ''
@@ -275,4 +281,3 @@ export function parseEventInput(input: string): {
     notes,
   }
 }
-
