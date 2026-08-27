@@ -107,6 +107,69 @@ export function createStatusFlex(count: number | null): LineFlexMessage {
   }
 }
 
+export function createMorningReminderFlex(tasks: Array<Record<string, unknown>>, date: string): LineFlexMessage {
+  const rows = tasks.slice(0, 5).map((task, index) => {
+    const priority = priorityStyle(Number(task.priority))
+    const title = String(task.title || 'รายการใหม่')
+    const subject = task.subject && task.subject !== 'General' ? String(task.subject) : 'ทั่วไป'
+
+    return {
+      type: 'box',
+      layout: 'horizontal',
+      spacing: 'sm',
+      paddingAll: 'sm',
+      backgroundColor: index % 2 === 0 ? '#FFFAF4' : palette.paper,
+      cornerRadius: 'sm',
+      contents: [
+        text(`${index + 1}`, { size: 'sm', weight: 'bold', color: palette.blue, flex: 0, align: 'center' }),
+        {
+          type: 'box',
+          layout: 'vertical',
+          flex: 1,
+          contents: [
+            text(title, { size: 'sm', weight: 'bold', wrap: true, maxLines: 2 }),
+            text(subject, { size: 'xs', color: palette.muted, margin: 'xs' }),
+          ],
+        },
+        {
+          type: 'box',
+          layout: 'vertical',
+          backgroundColor: priority.soft,
+          cornerRadius: 'sm',
+          paddingAll: 'xs',
+          contents: [text(priority.label, { size: 'xs', color: priority.color, align: 'center', weight: 'bold' })],
+        },
+      ],
+    }
+  })
+
+  const extraCount = Math.max(0, tasks.length - 5)
+  const body: FlexComponent[] = [
+    ...header('GOOD MORNING', 'แผนเล็ก ๆ ของวันนี้ ☀️'),
+    text(`📅 ${date} · มี ${tasks.length} งานที่ควรจัดการ`, { size: 'sm', color: palette.muted }),
+    divider(),
+    { type: 'box', layout: 'vertical', spacing: 'xs', contents: rows },
+  ]
+
+  if (extraCount > 0) {
+    body.push(text(`และอีก ${extraCount} งาน ดูทั้งหมดได้ในรายการของคุณ`, { size: 'xs', color: palette.muted, margin: 'sm' }))
+  }
+
+  body.push(text('เริ่มจากงานเล็กที่สุดก่อนก็ได้ คุณทำได้แน่นอน ✨', { size: 'sm', color: palette.muted, wrap: true, margin: 'md' }))
+
+  return {
+    type: 'flex',
+    altText: `อรุณสวัสดิ์ วันนี้มีงาน ${tasks.length} รายการ`,
+    contents: bubble(
+      body,
+      footer(
+        button('ดูงานทั้งหมด', '/list', { flex: 1, color: palette.blueSoft }),
+        button('เช็กสถานะ', '/status', { flex: 1, color: palette.greenSoft }),
+      ),
+    ),
+  }
+}
+
 function priorityStyle(priority: number | null | undefined): { label: string; color: string; soft: string } {
   if (priority === 3) return { label: 'ด่วน', color: '#D87569', soft: '#FBE5E1' }
   if (priority === 2) return { label: 'ปกติ', color: '#C18D55', soft: '#F8EEDC' }

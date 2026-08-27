@@ -1,9 +1,22 @@
 import { NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase-admin'
 import { sendLinePush } from '@/lib/line'
+import { createMorningReminderFlex } from '@/lib/line-flex'
 
 export async function GET(request: Request) {
   try {
+    const cronSecret = process.env.CRON_SECRET
+    const authorization = request.headers.get('authorization')
+
+    if (!cronSecret) {
+      console.error('CRON_SECRET is not configured')
+      return NextResponse.json({ error: 'Cron secret is not configured' }, { status: 500 })
+    }
+
+    if (authorization !== `Bearer ${cronSecret}`) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const admin = getSupabaseAdmin()
     const today = new Date().toISOString().split('T')[0]
 
@@ -33,32 +46,7 @@ export async function GET(request: Request) {
         .limit(5)
 
       if (tasks && tasks.length > 0) {
-        let text = `☀️ สวัสดีครับ! แจ้งเตือนงานที่ต้องทำวันนี้ (📅 ${today}):\n`
-        tasks.forEach((t, idx) => {
-          const priorityBadge = t.priority === 3 ? '🔴' : t.priority === 2 ? '🟡' : '🟢'
-          const subjectTag = t.subject && t.subject !== 'General' ? ` [${t.subject}]` : ''
-          text += `\n${idx + 1}. ${priorityBadge} ${t.title}${subjectTag}`
-        })
-        text += `\n\n💪 สู้ๆ กับการเรียนและการทำงานวันนี้นะครับ!\nพิมพ์ /list เพื่อดูทั้งหมด`
-
-        const success = await sendLinePush(conn.line_user_id, [
-          {
-            type: 'text',
-            text,
-            quickReply: {
-              items: [
-                {
-                  type: 'action',
-                  action: { type: 'message', label: '📋 ดูรายการงาน', text: '/list' },
-                },
-                {
-                  type: 'action',
-                  action: { type: 'message', label: '➕ เพิ่ม To-Do', text: '/todo ' },
-                },
-              ],
-            },
-          },
-        ])
+        const success = await sendLinePush(conn.line_user_id, [createMorningReminderFlex(tasks, today)])
 
         if (success) sentCount++
       }
