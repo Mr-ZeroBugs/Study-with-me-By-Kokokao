@@ -31,7 +31,7 @@ export async function POST(request: Request) {
         await sendLineReply(replyToken, [
           {
             type: 'text',
-            text: `👋 ยินดีต้อนรับสู่ StudyManager (AI Powered)!\n\nในการเริ่มใช้งานและรับแจ้งเตือน To-Do:\n1. เข้าสู่ระบบบนเว็บ StudyTimer ของคุณ\n2. ไปที่หน้า Tasks / Planner แล้วกด "📱 เชื่อมต่อ LINE"\n3. นำรหัสที่ได้ (เช่น LINK-1234) มาพิมพ์ส่งให้บอทที่นี่ได้เลยครับ ✨`,
+            text: `👋 ยินดีต้อนรับสู่ Study Manager.koko!\n\nในการเริ่มใช้งานและรับแจ้งเตือน To-Do:\n1. เข้าสู่ระบบบนเว็บ StudyTimer ของคุณ\n2. ไปที่หน้า Tasks / Planner แล้วกด "📱 เชื่อมต่อ LINE"\n3. นำรหัสที่ได้ (เช่น LINK-1234) มาพิมพ์ส่งให้บอทที่นี่ได้เลยครับ ✨`,
           },
         ])
         continue
@@ -77,7 +77,7 @@ export async function POST(request: Request) {
           await sendLineReply(replyToken, [
             {
               type: 'text',
-              text: `🎉 เชื่อมต่อบัญชีกับ StudyTimer สำเร็จแล้ว!\n🤖 ระบบเปิดใช้งาน Gemini AI ให้คุณแล้ว สามารถพิมพ์สั่งงานภาษาพูดได้สบายๆ เลยครับ เช่น:\n"พรุ่งนี้เตือนอ่านหนังสือชีวะตอน 2 ทุ่มด้วยนะ"`,
+              text: `🎉 เชื่อมต่อบัญชีกับ StudyTimer สำเร็จแล้ว!\n🤖 Study Manager.koko พร้อมรับคำสั่งภาษาพูดแล้ว พิมพ์สั่งงานได้สบายๆ เลยครับ เช่น:\n"พรุ่งนี้เตือนอ่านหนังสือชีวะตอน 2 ทุ่มด้วยนะ"`,
               quickReply: {
                 items: [
                   {
@@ -168,7 +168,7 @@ export async function POST(request: Request) {
           await sendLineReply(replyToken, [
             {
               type: 'text',
-              text: `🟢 บัญชีเชื่อมต่อเรียบร้อยแล้ว!\n🤖 AI Engine: Google Gemini Active\n📊 งานค้างอยู่ทั้งหมด: ${count ?? 0} รายการ\nพิมพ์ /list หรือถามบอทได้เลยครับ`,
+              text: `🟢 บัญชีเชื่อมต่อเรียบร้อยแล้ว!\n🤖 Study Manager.koko ออนไลน์\n📊 งานค้างอยู่ทั้งหมด: ${count ?? 0} รายการ\nพิมพ์ /list หรือถามบอทได้เลยครับ`,
               quickReply: {
                 items: [
                   {
@@ -518,4 +518,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: err.message || 'Internal error' }, { status: 500 })
   }
 }
-
