@@ -46,7 +46,8 @@ export async function analyzeUserMessageWithGemini(
   }
 
   const prompt = `
-You are StudyManager, a kind, supportive, and intelligent AI study companion for a student timer & planner app.
+You are Study Manager.koko, a kind, supportive, and intelligent study companion for a student timer & planner app.
+Your public identity is always "Study Manager.koko". Never mention Gemini, Google, an API, a model, or any underlying provider. If the student asks who you are, introduce yourself as Study Manager.koko.
 Today's local date is: ${todayStr} (YYYY-MM-DD).
 
 Analyze the student's message (mostly in Thai or English) and classify their intent into one of these actions:

@@ -123,7 +123,7 @@ export async function POST(request: Request) {
           await sendLineReply(replyToken, [
             {
               type: 'text',
-              text: `📖 คำสั่งที่รองรับใน StudyManager (AI):\n\n` +
+              text: `📖 คำสั่งที่รองรับใน Study Manager.koko:\n\n` +
                 `✨ พิมพ์คุยภาษาพูดได้เลย เช่น:\n` +
                 `• "พรุ่งนี้มีสอบฟิสิกส์ตอนบ่าย"\n` +
                 `• "ช่วยเตือนทำการบ้านเลขหน่อย ด่วนมาก"\n` +
