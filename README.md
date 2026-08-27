@@ -18,6 +18,10 @@
   - **Guest Mode:** Instant offline-first tracking saved to `LocalStorage`.
   - **Cloud Mode:** Sign in to sync your study logs, streak, and daily history across all devices.
 - 📅 **Study Archive Calendar & Streak Tracker:** Visual heatmap of daily minutes and study habits.
+- 📚 **Subject Tracking:** Create subjects before a session, keep each subject's focus time separate, and inspect the split by 7 days, 30 days, or all time.
+- 🥧 **Focus Mix & Study Analytics:** Interactive subject donut chart plus time-window summaries, focus/pause timeline, and a detailed study calendar.
+- 🗂️ **Planning Hub:** Deadline-aware tasks, long-term goals broken into milestones, and a timeline for competitions, projects, exams, and important dates.
+- 🧭 **Separate App Pages:** Focus, Tasks, Goals, Events, and Stats each have their own route with a modern bottom navigation bar.
 - 🎊 **Confetti Celebration:** Soft pastel celebration upon completing focus milestones.
 
 ---

@@ -1,6 +1,8 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
+import { BottomNav } from '../components/bottom-nav'
+import { SettingsFloatingButton } from '../components/settings-floating-button'
 
 export const metadata: Metadata = {
   title: 'study with me · focus softly',
@@ -39,11 +41,28 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className="bg-background">
+    <html lang="en" suppressHydrationWarning className="bg-background">
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  var theme = localStorage.getItem('study_timer_theme_v2') || 'cozy';
+                  document.documentElement.setAttribute('data-theme', theme);
+                } catch (e) {}
+              })();
+            `,
+          }}
+        />
+      </head>
       <body className="antialiased">
+        <SettingsFloatingButton />
         {children}
+        <BottomNav />
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>
   )
 }
+

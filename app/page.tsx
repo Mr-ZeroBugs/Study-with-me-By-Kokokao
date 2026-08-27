@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { usePathname } from 'next/navigation'
 import {
   BookOpen,
   CalendarDays,
@@ -28,11 +29,17 @@ import {
   recordFocusSession,
   getLocalDateKey,
   calculateStreak,
+  createStudyIntervalId,
   getLocalRounds,
+  getLocalSubjects,
+  recordStudyInterval,
+  saveLocalSubjects,
   saveLocalRounds,
   type DayLog,
 } from '../lib/storage'
 import { AuthModal } from '../components/auth-modal'
+import { DashboardPage } from '../components/dashboard-page'
+import { getIntensityThreshold } from '../lib/theme'
 
 const modes = {
   focus: { label: 'Focus time', minutes: 25, color: 'mint' },
@@ -43,6 +50,58 @@ const modes = {
 type Mode = keyof typeof modes
 type TimerMode = 'flow' | 'countdown'
 type Extension = 'pomodoro' | 'rule5217' | null
+
+const TIMER_SESSION_KEY = 'study_timer_session_v1'
+
+type PersistedTimerSession = {
+  version: 1
+  running: boolean
+  timerMode: TimerMode
+  mode: Mode
+  extension: Extension
+  subject: string
+  elapsedSeconds: number
+  seconds: number
+  reminderMinutes: number
+  reminderSeconds: number
+  savedAt: number
+  activeStartedAt: number | null
+}
+
+function readPersistedTimerSession(): PersistedTimerSession | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const parsed = JSON.parse(localStorage.getItem(TIMER_SESSION_KEY) ?? 'null') as Partial<PersistedTimerSession> | null
+    if (!parsed || parsed.version !== 1 || typeof parsed.savedAt !== 'number') return null
+    if (parsed.timerMode !== 'flow' && parsed.timerMode !== 'countdown') return null
+    if (parsed.mode !== 'focus' && parsed.mode !== 'short' && parsed.mode !== 'long') return null
+    const extension = parsed.extension === 'pomodoro' || parsed.extension === 'rule5217' ? parsed.extension : null
+    const session: PersistedTimerSession = {
+      version: 1,
+      running: parsed.running === true,
+      timerMode: parsed.timerMode,
+      mode: parsed.mode,
+      extension,
+      subject: typeof parsed.subject === 'string' && parsed.subject.trim() ? parsed.subject.trim().slice(0, 40) : 'General',
+      elapsedSeconds: Math.max(0, Math.floor(Number(parsed.elapsedSeconds) || 0)),
+      seconds: Math.max(0, Math.floor(Number(parsed.seconds) || modes[parsed.mode].minutes * 60)),
+      reminderMinutes: Math.max(1, Math.floor(Number(parsed.reminderMinutes) || 25)),
+      reminderSeconds: Math.max(0, Math.floor(Number(parsed.reminderSeconds) || 25 * 60)),
+      savedAt: parsed.savedAt,
+      activeStartedAt: typeof parsed.activeStartedAt === 'number' ? parsed.activeStartedAt : null,
+    }
+    return session
+  } catch {
+    return null
+  }
+}
+
+function savePersistedTimerSession(session: Omit<PersistedTimerSession, 'version' | 'savedAt'>) {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(TIMER_SESSION_KEY, JSON.stringify({ ...session, version: 1, savedAt: Date.now() }))
+  } catch {}
+}
 
 const tips = [
   { title: 'tiny start', text: 'วางโทรศัพท์คว่ำไว้ แล้วเปิดหนังสือแค่หน้าเดียวก่อนนะ' },
@@ -75,7 +134,7 @@ function triggerCozyConfetti() {
   })
 }
 
-export default function Page() {
+function TimerPage() {
   // Timer States
   const [timerMode, setTimerMode] = useState<TimerMode>('flow')
   const [extension, setExtension] = useState<Extension>(null)
@@ -87,20 +146,24 @@ export default function Page() {
   const [reminderSeconds, setReminderSeconds] = useState(25 * 60)
   const [reminderReached, setReminderReached] = useState(false)
   const [soundEnabled, setSoundEnabled] = useState(true)
+  const [timerRestored, setTimerRestored] = useState(false)
 
   // User & Data States
   const [user, setUser] = useState<User | null>(null)
   const [isAuthOpen, setIsAuthOpen] = useState(false)
   const [sessions, setSessions] = useState(0)
   const [logs, setLogs] = useState<DayLog>({})
-  const [monthDate, setMonthDate] = useState(() => {
-    const now = new Date()
-    return new Date(now.getFullYear(), now.getMonth(), 1)
-  })
+  const [subjects, setSubjects] = useState<string[]>(['General'])
+  const [selectedSubject, setSelectedSubject] = useState('General')
+  const [subjectDraft, setSubjectDraft] = useState('')
+  const [isAddingSubject, setIsAddingSubject] = useState(false)
+  // Use a stable initial month for SSR, then switch to the user's current month after mount.
+  const [monthDate, setMonthDate] = useState(() => new Date(2000, 0, 1))
   const [tipIndex, setTipIndex] = useState(0)
   const [mounted, setMounted] = useState(false)
   const [todayKey, setTodayKey] = useState('')
   const [todayLabel, setTodayLabel] = useState('today')
+  const [highThreshold, setHighThreshold] = useState(90)
 
   // Refs for accurate timestamp-based timer (No tab-switch drift)
   const timerStartRef = useRef<number | null>(null)
@@ -108,32 +171,123 @@ export default function Page() {
   const baseElapsedRef = useRef<number>(0)
   const baseReminderRef = useRef<number>(25 * 60)
   const lastMinuteSyncRef = useRef<number>(0)
+  // Keep the interval effect stable while the timer is running. Re-running the
+  // effect for unrelated UI updates (sound, auth, logs, etc.) used to create a
+  // new start timestamp and could make open-ended focus appear to reset.
+  const timerOptionsRef = useRef({ running, timerMode, mode, extension, reminderMinutes, reminderSeconds, soundEnabled, user, selectedSubject, seconds, elapsedSeconds })
+  timerOptionsRef.current = { running, timerMode, mode, extension, reminderMinutes, reminderSeconds, soundEnabled, user, selectedSubject, seconds, elapsedSeconds }
+  const activeIntervalRef = useRef<{ startedAt: number; timerMode: TimerMode; mode: Mode; subject: string; user: User | null } | null>(null)
+  const restoredActiveStartedAtRef = useRef<number | null>(null)
+  const restoredLastMinuteSyncRef = useRef<number | null>(null)
+  const timerRestoredRef = useRef(false)
+
+  const persistCurrentTimer = useCallback(() => {
+    if (!timerRestoredRef.current) return
+    const current = timerOptionsRef.current
+    savePersistedTimerSession({
+      running: current.running,
+      timerMode: current.timerMode,
+      mode: current.mode,
+      extension: current.extension,
+      subject: current.selectedSubject,
+      elapsedSeconds: current.elapsedSeconds,
+      seconds: current.seconds,
+      reminderMinutes: current.reminderMinutes,
+      reminderSeconds: current.reminderSeconds,
+      activeStartedAt: current.running ? activeIntervalRef.current?.startedAt ?? Date.now() : null,
+    })
+  }, [])
+
+  const finishActiveInterval = useCallback(() => {
+    const activeInterval = activeIntervalRef.current
+    if (!activeInterval) return
+    activeIntervalRef.current = null
+    const endedAt = Date.now()
+    const durationSeconds = Math.max(0, Math.floor((endedAt - activeInterval.startedAt) / 1000))
+    if (durationSeconds < 5) return
+    void recordStudyInterval(timerOptionsRef.current.user ?? activeInterval.user, {
+      id: createStudyIntervalId(),
+      startedAt: new Date(activeInterval.startedAt).toISOString(),
+      endedAt: new Date(endedAt).toISOString(),
+      durationSeconds,
+      timerMode: activeInterval.timerMode,
+      mode: activeInterval.mode,
+      subject: activeInterval.subject,
+    })
+  }, [])
 
   // 1. Initialize User, Today info, and Load Data
   useEffect(() => {
     const now = new Date()
     const key = getLocalDateKey(now)
+    setMonthDate(new Date(now.getFullYear(), now.getMonth(), 1))
     setTodayKey(key)
     setTodayLabel(now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }))
     setSessions(getLocalRounds(key))
+    setSubjects(getLocalSubjects())
+    setHighThreshold(getIntensityThreshold())
     setMounted(true)
 
-    // Load initial logs
-    loadStudyLogs(null).then((initialLogs) => {
-      setLogs(initialLogs)
-    })
+    const loadData = async (currentUser: User | null) => {
+      const nextLogs = await loadStudyLogs(currentUser)
+      setLogs(nextLogs)
+      setSubjects((previous) => Array.from(new Set([...previous, ...getLocalSubjects()])))
+    }
+
+    loadData(null)
+
+    // Listen for intensity threshold changes from Settings modal
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'study_intensity_threshold' && e.newValue) {
+        const val = parseInt(e.newValue, 10)
+        if (Number.isFinite(val) && val >= 15) setHighThreshold(val)
+      }
+    }
+    window.addEventListener('storage', onStorage)
 
     // Listen to Supabase Auth state changes
     const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       const currentUser = session?.user ?? null
       setUser(currentUser)
-      const userLogs = await loadStudyLogs(currentUser)
-      setLogs(userLogs)
+      await loadData(currentUser)
     })
 
     return () => {
       authListener.subscription.unsubscribe()
+      window.removeEventListener('storage', onStorage)
     }
+  }, [])
+
+  // Restore the timer after route navigation or a refresh. The server still
+  // renders stable zero/default values; browser-only state is applied after mount.
+  useEffect(() => {
+    const persisted = readPersistedTimerSession()
+    if (persisted) {
+      const now = Date.now()
+      const secondsSinceSave = persisted.running ? Math.max(0, Math.floor((now - persisted.savedAt) / 1000)) : 0
+      const nextElapsed = persisted.timerMode === 'flow' ? persisted.elapsedSeconds + secondsSinceSave : persisted.elapsedSeconds
+      const nextCountdown = persisted.timerMode === 'countdown' && persisted.running
+        ? Math.max(0, persisted.seconds - secondsSinceSave)
+        : persisted.seconds
+      const shouldResume = persisted.running && (persisted.timerMode === 'flow' || nextCountdown > 0)
+
+      setTimerMode(persisted.timerMode)
+      setMode(persisted.mode)
+      setExtension(persisted.extension)
+      setSelectedSubject(persisted.subject)
+      setSubjects((previous) => Array.from(new Set([...previous, persisted.subject])))
+      setElapsedSeconds(nextElapsed)
+      setSeconds(nextCountdown > 0 ? nextCountdown : modes[persisted.mode].minutes * 60)
+      setReminderMinutes(persisted.reminderMinutes)
+      setReminderSeconds(persisted.reminderSeconds)
+      if (shouldResume) {
+        restoredActiveStartedAtRef.current = persisted.activeStartedAt ?? persisted.savedAt
+        restoredLastMinuteSyncRef.current = persisted.elapsedSeconds
+      }
+      setRunning(shouldResume)
+    }
+    timerRestoredRef.current = true
+    setTimerRestored(true)
   }, [])
 
   // 2. Complete Focus Session Handler
@@ -150,11 +304,13 @@ export default function Page() {
         saveLocalRounds(todayKey, newSessions)
       }
 
-      const { updatedLogs } = await recordFocusSession(user, durationMins, mode, timerMode)
+      const { updatedLogs } = await recordFocusSession(user, durationMins, mode, timerMode, selectedSubject)
       setLogs(updatedLogs)
     },
-    [soundEnabled, sessions, todayKey, user, mode, timerMode]
+    [soundEnabled, sessions, todayKey, user, mode, timerMode, selectedSubject]
   )
+  const handleFocusCompletedRef = useRef(handleFocusCompleted)
+  handleFocusCompletedRef.current = handleFocusCompleted
 
   // 3. Accurate Timestamp-based Timer Engine
   useEffect(() => {
@@ -163,44 +319,53 @@ export default function Page() {
       return
     }
 
-    // Set start timestamp
-    const now = Date.now()
-    timerStartRef.current = now
-    baseSecondsRef.current = seconds
-    baseElapsedRef.current = elapsedSeconds
-    baseReminderRef.current = reminderSeconds
-    lastMinuteSyncRef.current = elapsedSeconds
+    const options = timerOptionsRef.current
+    const clockStartedAt = Date.now()
+    const startedAt = activeIntervalRef.current?.startedAt ?? restoredActiveStartedAtRef.current ?? clockStartedAt
+    restoredActiveStartedAtRef.current = null
+    timerStartRef.current = clockStartedAt
+    baseSecondsRef.current = options.seconds
+    baseElapsedRef.current = options.elapsedSeconds
+    baseReminderRef.current = options.reminderSeconds
+    lastMinuteSyncRef.current = restoredLastMinuteSyncRef.current ?? options.elapsedSeconds
+    restoredLastMinuteSyncRef.current = null
+    activeIntervalRef.current = {
+      startedAt,
+      timerMode: options.timerMode,
+      mode: options.mode,
+      subject: options.selectedSubject,
+      user: options.user,
+    }
 
     const interval = window.setInterval(() => {
       if (!timerStartRef.current) return
       const elapsedWallClock = Math.floor((Date.now() - timerStartRef.current) / 1000)
+      const currentOptions = timerOptionsRef.current
+      const activeInterval = activeIntervalRef.current
+      if (!activeInterval) return
 
-      if (timerMode === 'flow') {
+      if (activeInterval.timerMode === 'flow') {
         const currentElapsed = baseElapsedRef.current + elapsedWallClock
         setElapsedSeconds(currentElapsed)
 
         // Check if a full minute passed during flow study to increment stats
-        if (currentElapsed > 0 && Math.floor(currentElapsed / 60) > Math.floor(lastMinuteSyncRef.current / 60)) {
+        const minutesToRecord = Math.floor(currentElapsed / 60) - Math.floor(lastMinuteSyncRef.current / 60)
+        if (minutesToRecord > 0) {
           lastMinuteSyncRef.current = currentElapsed
-          const today = getLocalDateKey(new Date())
-          setLogs((prev) => ({
-            ...prev,
-            [today]: (prev[today] ?? 0) + 1,
-          }))
           // Background sync
-          if (user) {
-            recordFocusSession(user, 1, 'flow', 'flow')
-          }
+          recordFocusSession(currentOptions.user, minutesToRecord, 'flow', 'flow', activeInterval.subject).then(({ updatedLogs }) => {
+            setLogs(updatedLogs)
+          })
         }
 
         // Extension reminder countdown
-        if (extension) {
-          const currentReminder = baseReminderRef.current - (elapsedWallClock % (reminderMinutes * 60))
+        if (currentOptions.extension) {
+          const currentReminder = baseReminderRef.current - (elapsedWallClock % (currentOptions.reminderMinutes * 60))
           if (currentReminder <= 0) {
             setReminderReached(true)
-            if (soundEnabled) soundEngine.playFocusComplete()
-            baseReminderRef.current = reminderMinutes * 60
-            setReminderSeconds(reminderMinutes * 60)
+            if (currentOptions.soundEnabled) soundEngine.playFocusComplete()
+            baseReminderRef.current = currentOptions.reminderMinutes * 60
+            setReminderSeconds(currentOptions.reminderMinutes * 60)
           } else {
             setReminderSeconds(currentReminder)
           }
@@ -209,12 +374,13 @@ export default function Page() {
         // Countdown mode
         const remaining = baseSecondsRef.current - elapsedWallClock
         if (remaining <= 0) {
+          finishActiveInterval()
           setRunning(false)
-          setSeconds(modes[mode].minutes * 60)
-          if (mode === 'focus') {
-            handleFocusCompleted(modes.focus.minutes)
+          setSeconds(modes[activeInterval.mode].minutes * 60)
+          if (activeInterval.mode === 'focus') {
+            void handleFocusCompletedRef.current(modes.focus.minutes)
           } else {
-            if (soundEnabled) soundEngine.playBreakComplete()
+            if (currentOptions.soundEnabled) soundEngine.playBreakComplete()
           }
         } else {
           setSeconds(remaining)
@@ -223,16 +389,28 @@ export default function Page() {
     }, 250)
 
     return () => window.clearInterval(interval)
-  }, [running, timerMode, mode, extension, reminderMinutes, soundEnabled, handleFocusCompleted, user])
+  }, [running, finishActiveInterval])
+
+  // Save a lightweight snapshot while running so navigation never destroys the
+  // active clock. Absolute timestamps account for time spent on other pages.
+  useEffect(() => {
+    if (!timerRestored) return
+    persistCurrentTimer()
+    if (!running) return
+    const persistenceInterval = window.setInterval(persistCurrentTimer, 1000)
+    return () => window.clearInterval(persistenceInterval)
+  }, [timerRestored, running, timerMode, mode, extension, reminderMinutes, selectedSubject, persistCurrentTimer])
 
   // Timer Controls
   const togglePlay = () => {
     if (soundEnabled) soundEngine.playSoftClick()
-    setRunning(!running)
+    if (running) finishActiveInterval()
+    setRunning((current) => !current)
   }
 
   const selectMode = (nextMode: Mode) => {
     if (soundEnabled) soundEngine.playSoftClick()
+    finishActiveInterval()
     setMode(nextMode)
     setSeconds(modes[nextMode].minutes * 60)
     baseSecondsRef.current = modes[nextMode].minutes * 60
@@ -241,6 +419,7 @@ export default function Page() {
 
   const selectTimerMode = (nextMode: TimerMode) => {
     if (soundEnabled) soundEngine.playSoftClick()
+    finishActiveInterval()
     setTimerMode(nextMode)
     setRunning(false)
     setSeconds(modes[mode].minutes * 60)
@@ -253,6 +432,7 @@ export default function Page() {
 
   const selectExtension = (nextExtension: Exclude<Extension, null>) => {
     if (soundEnabled) soundEngine.playSoftClick()
+    finishActiveInterval()
     const enabled = extension === nextExtension ? null : nextExtension
     const interval = nextExtension === 'pomodoro' ? 25 : 52
     setExtension(enabled)
@@ -265,6 +445,7 @@ export default function Page() {
 
   const reset = () => {
     if (soundEnabled) soundEngine.playSoftClick()
+    finishActiveInterval()
     setSeconds(modes[mode].minutes * 60)
     baseSecondsRef.current = modes[mode].minutes * 60
     setElapsedSeconds(0)
@@ -273,6 +454,22 @@ export default function Page() {
     baseReminderRef.current = reminderMinutes * 60
     setReminderReached(false)
     setRunning(false)
+  }
+
+  const selectSubject = (nextSubject: string) => {
+    setSelectedSubject(nextSubject)
+    reset()
+  }
+
+  const addSubject = () => {
+    const nextSubject = subjectDraft.trim().slice(0, 40)
+    if (!nextSubject) return
+    const nextSubjects = Array.from(new Set([...subjects, nextSubject]))
+    saveLocalSubjects(nextSubjects)
+    setSubjects(nextSubjects)
+    selectSubject(nextSubject)
+    setSubjectDraft('')
+    setIsAddingSubject(false)
   }
 
   // Calculated Stats
@@ -285,7 +482,7 @@ export default function Page() {
   )
 
   return (
-    <main className="min-h-screen overflow-hidden px-4 py-5 text-ink sm:px-8 lg:px-12">
+    <main className="min-h-screen overflow-hidden px-4 py-5 pb-28 text-ink sm:px-8 lg:px-12">
       <div className="mx-auto max-w-7xl">
         {/* Header */}
         <header className="mb-7 flex items-center justify-between flex-wrap gap-3">
@@ -358,6 +555,24 @@ export default function Page() {
               <div className="status-dot">
                 <span /> {running ? 'in the zone' : 'ready when you are'}
               </div>
+            </div>
+
+            <div className="subject-picker">
+              <div className="subject-picker-heading">
+                <div><p className="eyebrow">study subject</p><span>What are we focusing on?</span></div>
+                <span className="subject-count">{subjects.length} saved</span>
+              </div>
+              <div className="subject-picker-controls">
+                <select aria-label="Study subject" value={selectedSubject} disabled={running} onChange={(event) => selectSubject(event.target.value)}>
+                  {subjects.map((subject) => <option key={subject} value={subject}>{subject}</option>)}
+                </select>
+                <button className="add-subject-button" aria-label="Create a new subject" onClick={() => setIsAddingSubject((value) => !value)}>＋ new subject</button>
+              </div>
+              {isAddingSubject && <div className="add-subject-form">
+                <input autoFocus value={subjectDraft} maxLength={40} placeholder="e.g. Biology" onChange={(event) => setSubjectDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') addSubject() }} />
+                <button onClick={addSubject}>add</button>
+              </div>}
+              <p className="subject-picker-note">This timer will be counted under <strong>{selectedSubject}</strong>.</p>
             </div>
 
             {/* Big Timer Clock */}
@@ -584,7 +799,7 @@ export default function Page() {
                   <div
                     key={key}
                     className={`calendar-day ${day ? '' : 'empty'} ${
-                      minutes >= 90 ? 'high' : minutes > 0 ? 'some' : ''
+                      minutes >= highThreshold ? 'high' : minutes > 0 ? 'some' : ''
                     }`}
                   >
                     <span>{day}</span>
@@ -603,7 +818,7 @@ export default function Page() {
               <p className="text-xs text-muted-ink">Your effort, in tiny squares.</p>
               <div className="flex items-center gap-2 text-[10px] text-muted-ink">
                 <span className="legend-dot" /> studied{' '}
-                <span className="legend-dot strong" /> deep focus (90m+)
+                <span className="legend-dot strong" /> deep focus ({highThreshold >= 60 ? (highThreshold % 60 === 0 ? `${highThreshold / 60}h+` : `${Math.floor(highThreshold / 60)}h ${highThreshold % 60}m+`) : `${highThreshold}m+`})
               </div>
             </div>
           </div>
@@ -666,12 +881,18 @@ export default function Page() {
         isOpen={isAuthOpen}
         onClose={() => setIsAuthOpen(false)}
         user={user}
-        onUserChange={async (nextUser) => {
-          setUser(nextUser)
-          const updated = await loadStudyLogs(nextUser)
-          setLogs(updated)
-        }}
+          onUserChange={async (nextUser) => {
+            setUser(nextUser)
+            const updated = await loadStudyLogs(nextUser)
+            setLogs(updated)
+            setSubjects((previous) => Array.from(new Set([...previous, ...getLocalSubjects()])))
+          }}
       />
     </main>
   )
+}
+
+export default function Page() {
+  const pathname = usePathname()
+  return pathname === '/' ? <DashboardPage /> : <TimerPage />
 }
