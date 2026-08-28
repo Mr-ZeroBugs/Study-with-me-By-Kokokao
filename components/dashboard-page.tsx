@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import Image from 'next/image'
 import { ArrowUpRight, CalendarDays, Check, CheckCircle2, ChevronRight, Flame, Flag, ListTodo, MessageCircle, Sparkles, Target } from 'lucide-react'
 import type { User } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
@@ -112,10 +111,7 @@ export function DashboardPage() {
           </button>
         </div>
       </div>
-      <div className="dashboard-hero-visual">
-        <div className="dashboard-hero-mascot" aria-hidden="true"><Image src="/mascots/koko/koko-laptop.png" alt="" width={160} height={160} priority /></div>
-        <div className="dashboard-date-card"><span>{now.toLocaleDateString('en-US', { weekday: 'long' })}</span><strong>{now.getDate()}</strong><small>{now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</small></div>
-      </div>
+      <div className="dashboard-date-card"><span>{now.toLocaleDateString('en-US', { weekday: 'long' })}</span><strong>{now.getDate()}</strong><small>{now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</small></div>
     </header>
 
 

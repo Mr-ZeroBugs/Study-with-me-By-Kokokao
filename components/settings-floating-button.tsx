@@ -48,7 +48,8 @@ export function SettingsFloatingButton() {
       <AuthModal
         isOpen={isAuthOpen}
         onClose={() => setIsAuthOpen(false)}
-        onSuccess={() => setIsAuthOpen(false)}
+        user={user}
+        onUserChange={setUser}
       />
     </>
   )

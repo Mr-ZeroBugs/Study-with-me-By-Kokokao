@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { usePathname } from 'next/navigation'
-import Image from 'next/image'
 import {
   BookOpen,
   CalendarDays,
@@ -165,14 +164,6 @@ function TimerPage() {
   const [todayKey, setTodayKey] = useState('')
   const [todayLabel, setTodayLabel] = useState('today')
   const [highThreshold, setHighThreshold] = useState(90)
-
-  const focusMascot = running
-    ? 'study'
-    : timerMode === 'countdown' && mode !== 'focus'
-      ? 'cozy'
-      : elapsedSeconds > 0
-        ? 'study'
-        : 'peek'
 
   // Refs for accurate timestamp-based timer (No tab-switch drift)
   const timerStartRef = useRef<number | null>(null)
@@ -561,13 +552,8 @@ function TimerPage() {
                   {timerMode === 'flow' ? 'Open-ended focus' : modes[mode].label}
                 </h2>
               </div>
-              <div className="timer-header-side">
-                <div className="focus-mascot" title={running ? 'Koko is studying with you' : 'Koko is ready when you are'}>
-                  <Image src={`/mascots/koko/koko-${focusMascot}.png`} alt="Koko" width={92} height={92} priority={running} />
-                </div>
-                <div className="status-dot">
-                  <span /> {running ? 'in the zone' : 'ready when you are'}
-                </div>
+              <div className="status-dot">
+                <span /> {running ? 'in the zone' : 'ready when you are'}
               </div>
             </div>
 
