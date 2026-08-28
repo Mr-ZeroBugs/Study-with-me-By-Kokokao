@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { CalendarDays, Check, ChevronDown, Droplets, Leaf, Plus, Sprout, Trash2, X } from 'lucide-react'
+import { CalendarDays, Check, ChevronDown, Droplets, Plus, Sprout, Trash2, X } from 'lucide-react'
 import type { User } from '@supabase/supabase-js'
 import { getLocalDateKey, loadSubjectLogs, type SubjectDayLogs } from '../lib/storage'
 import {
@@ -80,6 +80,7 @@ export function GoalsGarden({ user, subjects }: { user: User | null; subjects: s
   const [goalTargetDate, setGoalTargetDate] = useState('')
   const [goalSubjects, setGoalSubjects] = useState<string[]>([])
   const [expandedGoal, setExpandedGoal] = useState<string | null>(null)
+  const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null)
   const [stepDrafts, setStepDrafts] = useState<Record<string, string>>({})
 
   useEffect(() => {
@@ -138,6 +139,13 @@ export function GoalsGarden({ user, subjects }: { user: User | null; subjects: s
   }, [goalBySlot, shelfSlots])
   const wateredTodayCount = useMemo(() => data.goals.filter((goal) => subjectMinutes(subjectLogs, goal.subjects ?? [], [todayKey]) > 0).length, [data.goals, subjectLogs, todayKey])
   const totalStudyMinutes = useMemo(() => Object.values(subjectLogs).reduce((total, days) => total + Object.values(days).reduce((sum, minutes) => sum + minutes, 0), 0), [subjectLogs])
+  const selectedGoal = useMemo(() => data.goals.find((goal) => goal.id === selectedGoalId) ?? null, [data.goals, selectedGoalId])
+  const selectedGoalStats = useMemo(() => selectedGoal ? goalProgress(selectedGoal, data.steps) : null, [selectedGoal, data.steps])
+  const selectedGoalTotalMinutes = useMemo(() => selectedGoal ? subjectMinutes(subjectLogs, selectedGoal.subjects ?? []) : 0, [selectedGoal, subjectLogs])
+  const selectedGoalWeekMinutes = useMemo(() => selectedGoal ? subjectMinutes(subjectLogs, selectedGoal.subjects ?? [], recentKeys) : 0, [selectedGoal, subjectLogs, recentKeys])
+  const selectedGoalTodayMinutes = useMemo(() => selectedGoal ? subjectMinutes(subjectLogs, selectedGoal.subjects ?? [], [todayKey]) : 0, [selectedGoal, subjectLogs, todayKey])
+  const selectedGoalGrowth = getGrowthStage(selectedGoalTotalMinutes, selectedGoalStats?.percent ?? 0)
+  const selectedGoalSlot = selectedGoal ? Array.from(goalBySlot.entries()).find(([, goal]) => goal.id === selectedGoal.id)?.[0] ?? 0 : 0
 
   const persist = (next: PlannerData) => {
     setData(next)
@@ -155,6 +163,16 @@ export function GoalsGarden({ user, subjects }: { user: User | null; subjects: s
   }
 
   const closeComposer = () => setComposerOpen(false)
+
+  const openGoalDetails = (goalId: string) => {
+    setSelectedGoalId(goalId)
+    setExpandedGoal(null)
+  }
+
+  const closeGoalDetails = () => {
+    setSelectedGoalId(null)
+    setExpandedGoal(null)
+  }
 
   const toggleComposerSubject = (subject: string) => {
     setGoalSubjects((current) => current.includes(subject) ? current.filter((item) => item !== subject) : [...current, subject])
@@ -182,6 +200,7 @@ export function GoalsGarden({ user, subjects }: { user: User | null; subjects: s
     void removePlannerRecord(user, 'life_goals', goalId)
     removedStepIds.forEach((id) => void removePlannerRecord(user, 'goal_steps', id))
     if (expandedGoal === goalId) setExpandedGoal(null)
+    if (selectedGoalId === goalId) setSelectedGoalId(null)
   }
 
   const toggleStep = (id: string) => {
@@ -208,6 +227,7 @@ export function GoalsGarden({ user, subjects }: { user: User | null; subjects: s
   }
 
   return (
+    <>
     <main className="goals-garden-page min-h-screen overflow-hidden px-4 py-7 pb-28 text-ink sm:px-8 lg:px-12">
       <div className="goals-garden-shell">
         <header className="goals-garden-hero paper-card">
@@ -243,25 +263,12 @@ export function GoalsGarden({ user, subjects }: { user: User | null; subjects: s
                     const weekMinutes = subjectMinutes(subjectLogs, goal.subjects ?? [], recentKeys)
                     const todayMinutes = subjectMinutes(subjectLogs, goal.subjects ?? [], [todayKey])
                     const growth = getGrowthStage(totalMinutes, stats.percent)
-                    const isExpanded = expandedGoal === goal.id
+                    const isWatered = todayMinutes > 0
                     return (
-                      <article className={`goal-plant-card growth-${growth} ${todayMinutes > 0 ? 'is-watered' : ''}`} key={goal.id}>
-                        <div className="goal-plant-visual"><span className="goal-plant-emoji" aria-hidden="true">{plantStages[growth]}</span><span className="goal-pot" aria-hidden="true" /></div>
-                        <div className="goal-plant-copy">
-                          <div className="goal-plant-heading"><div><p className="goal-slot-label">goal {String(slot + 1).padStart(2, '0')}</p><h3>{goal.title}</h3></div><button type="button" className="goal-delete-button" aria-label={`Delete ${goal.title}`} onClick={() => deleteGoal(goal.id)}><Trash2 className="size-3.5" /></button></div>
-                          <p className="goal-description">{goal.description || 'A meaningful direction, grown one focused session at a time.'}</p>
-                          {goal.targetDate && <p className="goal-target"><CalendarDays className="size-3.5" /> target {formatDate(goal.targetDate)}</p>}
-                          <div className="goal-subject-heading"><span>focus playlist</span><button type="button" onClick={() => setExpandedGoal(isExpanded ? null : goal.id)} aria-expanded={isExpanded}>{isExpanded ? 'done' : 'edit'} <ChevronDown className={`size-3 ${isExpanded ? 'rotate-180' : ''}`} /></button></div>
-                          <div className="goal-subject-chips">{goal.subjects?.length ? goal.subjects.map((subject) => <span key={subject}>{subject}</span>) : <span className="goal-no-subject">choose subjects to water</span>}</div>
-                          {isExpanded && <div className="goal-subject-picker">{availableSubjects.map((subject) => <button type="button" key={subject} className={goal.subjects?.includes(subject) ? 'selected' : ''} aria-pressed={goal.subjects?.includes(subject) ?? false} onClick={() => toggleGoalSubject(goal.id, subject)}>{goal.subjects?.includes(subject) && <Check className="size-3" />}{subject}</button>)}</div>}
-                          <div className="goal-progress-meta"><span><Droplets className={`size-3.5 ${todayMinutes > 0 ? 'watered' : ''}`} />{todayMinutes > 0 ? `${formatMinutes(todayMinutes)} watered today` : 'ready for today\'s water'}</span><span>{formatMinutes(weekMinutes)} this week</span></div>
-                          <div className="goal-progress-track"><span style={{ width: `${stats.percent}%` }} /></div>
-                          <div className="goal-progress-label"><span>{stats.complete}/{stats.steps.length} milestones</span><strong>{stats.percent}%</strong></div>
-                          <div className="goal-plant-actions"><Link href="/focus" className="goal-water-link"><Droplets className="size-3.5" /> water in focus</Link><span className="goal-growth-label"><Leaf className="size-3.5" /> {plantStageLabels[growth]}</span></div>
-                          <div className="goal-step-list">{stats.steps.slice(0, 3).map((step) => <button type="button" className={`goal-garden-step ${step.completed ? 'done' : ''}`} key={step.id} onClick={() => toggleStep(step.id)}>{step.completed ? <Check className="size-3.5" /> : <span className="goal-step-dot" />}{step.title}</button>)}</div>
-                          <div className="goal-step-adder"><input aria-label={`New milestone for ${goal.title}`} value={stepDrafts[goal.id] ?? ''} placeholder="add a milestone" onChange={(event) => setStepDrafts((current) => ({ ...current, [goal.id]: event.target.value }))} onKeyDown={(event) => { if (event.key === 'Enter') addStep(goal.id) }} /><button type="button" onClick={() => addStep(goal.id)}>add</button></div>
-                        </div>
-                      </article>
+                      <button type="button" className={`goal-pot-slot growth-${growth} ${isWatered ? 'is-watered' : ''}`} key={goal.id} onClick={() => openGoalDetails(goal.id)} aria-label={`Open goal ${goal.title}`}>
+                        <span className="goal-pot-display" aria-hidden="true"><span className="goal-pot-stage">{plantStages[growth]}</span><span className="goal-pot-vessel" /></span>
+                        <span className="goal-pot-tooltip"><strong>{goal.title}</strong><small>{formatMinutes(totalMinutes)} focused · {isWatered ? 'watered today' : plantStageLabels[growth]}</small></span>
+                      </button>
                     )
                   })}
                 </div>
@@ -274,6 +281,7 @@ export function GoalsGarden({ user, subjects }: { user: User | null; subjects: s
 
         <footer className="goals-garden-footer"><span><Sprout className="size-4" /> tiny sessions make strong roots.</span><Link href="/stats">see your study rhythm →</Link></footer>
       </div>
+    </main>
 
       {composerOpen && <div className="goal-composer-backdrop" role="dialog" aria-modal="true" aria-labelledby="goal-composer-title" onClick={(event) => { if (event.target === event.currentTarget) closeComposer() }}>
         <div className="goal-composer-card">
@@ -288,6 +296,31 @@ export function GoalsGarden({ user, subjects }: { user: User | null; subjects: s
           <button type="button" className="goal-composer-submit" onClick={addGoal}><Sprout className="size-4" /> plant {composerSlot !== null ? `on shelf ${composerSlot + 1}` : 'goal'}</button>
         </div>
       </div>}
-    </main>
+
+      {selectedGoal && selectedGoalStats && <div className="goal-detail-backdrop" role="dialog" aria-modal="true" aria-labelledby="goal-detail-title" onClick={(event) => { if (event.target === event.currentTarget) closeGoalDetails() }}>
+        <div className="goal-detail-card">
+          <div className="goal-detail-header">
+            <div className={`goal-detail-plant growth-${selectedGoalGrowth} ${selectedGoalTodayMinutes > 0 ? 'is-watered' : ''}`} aria-hidden="true"><span className="goal-pot-stage">{plantStages[selectedGoalGrowth]}</span><span className="goal-pot-vessel" /></div>
+            <div className="goal-detail-title"><p className="goal-slot-label">goal {String(selectedGoalSlot + 1).padStart(2, '0')} · {plantStageLabels[selectedGoalGrowth]}</p><h2 id="goal-detail-title">{selectedGoal.title}</h2>{selectedGoal.targetDate && <p className="goal-target"><CalendarDays className="size-3.5" /> target {formatDate(selectedGoal.targetDate)}</p>}</div>
+            <button type="button" className="goal-composer-close" aria-label="Close goal details" onClick={closeGoalDetails}><X className="size-4" /></button>
+          </div>
+          <p className="goal-detail-description">{selectedGoal.description || 'A meaningful direction, grown one focused session at a time.'}</p>
+
+          <div className="goal-detail-stat-grid" aria-label="Goal progress summary">
+            <div><span>all-time focus</span><strong>{formatMinutes(selectedGoalTotalMinutes)}</strong></div>
+            <div><span>this week</span><strong>{formatMinutes(selectedGoalWeekMinutes)}</strong></div>
+            <div><span>today</span><strong>{selectedGoalTodayMinutes ? `${formatMinutes(selectedGoalTodayMinutes)} watered` : 'not yet watered'}</strong></div>
+          </div>
+
+          <div className="goal-detail-columns">
+            <section className="goal-detail-section"><div className="goal-detail-section-heading"><span>focus playlist</span><button type="button" onClick={() => setExpandedGoal(expandedGoal === selectedGoal.id ? null : selectedGoal.id)} aria-expanded={expandedGoal === selectedGoal.id}>{expandedGoal === selectedGoal.id ? 'done' : 'edit'} <ChevronDown className={`size-3 ${expandedGoal === selectedGoal.id ? 'rotate-180' : ''}`} /></button></div><div className="goal-subject-chips">{selectedGoal.subjects?.length ? selectedGoal.subjects.map((subject) => <span key={subject}>{subject}</span>) : <span className="goal-no-subject">choose subjects to water</span>}</div>{expandedGoal === selectedGoal.id && <div className="goal-subject-picker">{availableSubjects.map((subject) => <button type="button" key={subject} className={selectedGoal.subjects?.includes(subject) ? 'selected' : ''} aria-pressed={selectedGoal.subjects?.includes(subject) ?? false} onClick={() => toggleGoalSubject(selectedGoal.id, subject)}>{selectedGoal.subjects?.includes(subject) && <Check className="size-3" />}{subject}</button>)}</div>}</section>
+            <section className="goal-detail-section"><div className="goal-detail-section-heading"><span>growth progress</span><strong>{selectedGoalStats.percent}%</strong></div><div className="goal-progress-track"><span style={{ width: `${selectedGoalStats.percent}%` }} /></div><p className="goal-detail-muted"><Droplets className="size-3.5" /> {selectedGoalStats.complete}/{selectedGoalStats.steps.length} milestones complete</p></section>
+          </div>
+
+          <div className="goal-detail-actions"><Link href="/focus" className="goal-water-link"><Droplets className="size-3.5" /> water in focus</Link><button type="button" className="goal-detail-delete" onClick={() => deleteGoal(selectedGoal.id)}><Trash2 className="size-3.5" /> delete goal</button></div>
+          <section className="goal-detail-milestones"><div className="goal-detail-section-heading"><span>milestones</span><small>tap to complete</small></div><div className="goal-step-list">{selectedGoalStats.steps.length ? selectedGoalStats.steps.map((step) => <button type="button" className={`goal-garden-step ${step.completed ? 'done' : ''}`} key={step.id} onClick={() => toggleStep(step.id)}>{step.completed ? <Check className="size-3.5" /> : <span className="goal-step-dot" />}{step.title}</button>) : <p className="goal-detail-muted">Add a small next step to give this goal roots.</p>}</div><div className="goal-step-adder"><input aria-label={`New milestone for ${selectedGoal.title}`} value={stepDrafts[selectedGoal.id] ?? ''} placeholder="add a milestone" onChange={(event) => setStepDrafts((current) => ({ ...current, [selectedGoal.id]: event.target.value }))} onKeyDown={(event) => { if (event.key === 'Enter') addStep(selectedGoal.id) }} /><button type="button" onClick={() => addStep(selectedGoal.id)}>add</button></div></section>
+        </div>
+      </div>}
+    </>
   )
 }
