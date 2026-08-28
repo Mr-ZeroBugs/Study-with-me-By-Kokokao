@@ -77,14 +77,43 @@ export function PlannerHub({ user, subjects, section = 'all' }: { user: User | n
     setTaskDue((current) => current || today)
     setEventDate((current) => current || today)
     let active = true
-    loadPlannerData(user).then((next) => {
-      if (active) {
+    let loading = false
+
+    const refresh = async (syncLocalRecords = false) => {
+      if (loading) return
+      loading = true
+      try {
+        const next = await loadPlannerData(user)
+        if (!active) return
         setData(next)
         setLoaded(true)
-        void syncPlannerData(user, next)
+        // Initial load still uploads local-only records after sign-in. Later
+        // background refreshes only read, so a stale tab never writes over a
+        // completion made from LINE.
+        if (syncLocalRecords) void syncPlannerData(user, next)
+      } finally {
+        loading = false
       }
-    })
-    return () => { active = false }
+    }
+
+    void refresh(true)
+
+    // LINE actions happen outside this tab. Refresh when the user returns to
+    // the page, and poll while visible so an already-open page catches the
+    // update without requiring a manual reload.
+    const refreshIfVisible = () => {
+      if (document.visibilityState === 'visible') void refresh()
+    }
+    window.addEventListener('focus', refreshIfVisible)
+    document.addEventListener('visibilitychange', refreshIfVisible)
+    const interval = window.setInterval(refreshIfVisible, 30_000)
+
+    return () => {
+      active = false
+      window.removeEventListener('focus', refreshIfVisible)
+      document.removeEventListener('visibilitychange', refreshIfVisible)
+      window.clearInterval(interval)
+    }
   }, [user])
 
   const persist = (next: PlannerData) => {

@@ -117,11 +117,15 @@ export async function loadPlannerData(user: User | null): Promise<PlannerData> {
       })),
     }
 
+    // Cloud is the source of truth for records that already exist remotely.
+    // The previous order let a stale local cache overwrite a newer server
+    // value (for example, completing a task from the LINE bot), so the web
+    // page would resurrect the task as incomplete on its next load.
     const merged: PlannerData = {
-      tasks: mergeById(cloud.tasks, local.tasks),
-      goals: mergeById(cloud.goals, local.goals),
-      steps: mergeById(cloud.steps, local.steps),
-      events: mergeById(cloud.events, local.events),
+      tasks: mergeById(local.tasks, cloud.tasks),
+      goals: mergeById(local.goals, cloud.goals),
+      steps: mergeById(local.steps, cloud.steps),
+      events: mergeById(local.events, cloud.events),
     }
     saveLocalPlannerData(merged)
     return merged
