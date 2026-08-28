@@ -71,9 +71,18 @@ CREATE TABLE IF NOT EXISTS public.life_goals (
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
   title TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
+  subjects TEXT[] NOT NULL DEFAULT '{}',
+  shelf_position INTEGER,
   target_date DATE,
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- Safe migration for goals created before subject playlists were added.
+ALTER TABLE public.life_goals
+  ADD COLUMN IF NOT EXISTS subjects TEXT[] NOT NULL DEFAULT '{}';
+
+ALTER TABLE public.life_goals
+  ADD COLUMN IF NOT EXISTS shelf_position INTEGER;
 
 CREATE TABLE IF NOT EXISTS public.goal_steps (
   id UUID PRIMARY KEY,

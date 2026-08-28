@@ -1,5 +1,5 @@
-import { PlannerPage } from '../../components/planner-page'
+import { GoalsGardenPage } from '../../components/goals-garden-page'
 
 export default function GoalsPage() {
-  return <PlannerPage section="goals" />
+  return <GoalsGardenPage />
 }

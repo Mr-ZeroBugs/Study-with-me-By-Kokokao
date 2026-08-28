@@ -146,7 +146,7 @@ export function PlannerHub({ user, subjects, section = 'all' }: { user: User | n
   const addGoal = () => {
     const title = goalTitle.trim()
     if (!title) return
-    const goal: LifeGoal = { id: createPlannerId(), title, description: '', targetDate: goalDate, createdAt: new Date().toISOString() }
+    const goal: LifeGoal = { id: createPlannerId(), title, description: '', targetDate: goalDate, subjects: [], shelfPosition: data.goals.length, createdAt: new Date().toISOString() }
     persist({ ...data, goals: [goal, ...data.goals] })
     setGoalTitle('')
     setGoalDate('')
