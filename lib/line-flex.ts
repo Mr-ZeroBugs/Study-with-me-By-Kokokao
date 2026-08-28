@@ -48,6 +48,14 @@ const g = {
   amber: '#A06820',
   amberFrost: '#FBF5E8',
   amberBorder: '#DEC898',
+
+  // Bright sticker-card accents. Keep the ink constant so every card feels
+  // like one illustrated product instead of a collection of soft dashboards.
+  sun: '#F6C744',
+  coral: '#F08A86',
+  mint: '#9FD8AF',
+  skyBright: '#A8C9EC',
+  violetBright: '#C8B6E5',
 }
 
 type Fc = Record<string, unknown>
@@ -90,12 +98,12 @@ const chip = (value: string, color: string, backgroundColor: string, borderColor
   type: 'box',
   layout: 'vertical',
   backgroundColor,
-  cornerRadius: '20px',
+  cornerRadius: '8px',
   paddingTop: 'xs',
   paddingBottom: 'xs',
   paddingStart: 'md',
   paddingEnd: 'md',
-  borderWidth: '1px',
+  borderWidth: '2px',
   borderColor,
   contents: [label(value, color)],
 })
@@ -105,9 +113,9 @@ const iconCell = (value: string, size: string, color: string, backgroundColor: s
   layout: 'vertical',
   width: size,
   height: size,
-  cornerRadius: '10px',
+  cornerRadius: '9px',
   backgroundColor,
-  borderWidth: '1px',
+  borderWidth: '2px',
   borderColor,
   alignItems: 'center',
   justifyContent: 'center',
@@ -118,10 +126,10 @@ const metricTile = (value: string, caption: string, color: string, backgroundCol
   type: 'box',
   layout: 'vertical',
   flex: 1,
-  backgroundColor,
-  cornerRadius: '12px',
-  borderWidth: '1px',
-  borderColor,
+  backgroundColor: g.white,
+  cornerRadius: '10px',
+  borderWidth: '2px',
+  borderColor: g.ink,
   paddingTop: 'md',
   paddingBottom: 'md',
   paddingStart: 'sm',
@@ -129,7 +137,7 @@ const metricTile = (value: string, caption: string, color: string, backgroundCol
   alignItems: 'center',
   contents: [
     t(value, { size: 'lg', weight: 'bold', color, align: 'center' }),
-    t(caption, { size: 'xxs', color: g.sub, align: 'center', margin: 'xs', wrap: true }),
+    t(caption, { size: 'xxs', color: g.inkMid, align: 'center', margin: 'xs', wrap: true }),
   ],
 })
 
@@ -147,10 +155,10 @@ const metricStrip = (tiles: Fc[]): Fc => ({
 const panel = (contents: Fc[], backgroundColor: string, borderColor: string): Fc => ({
   type: 'box',
   layout: 'vertical',
-  backgroundColor,
+  backgroundColor: g.white,
   cornerRadius: '14px',
-  borderWidth: '1px',
-  borderColor,
+  borderWidth: '2px',
+  borderColor: g.ink,
   paddingAll: 'lg',
   contents,
 })
@@ -173,7 +181,7 @@ const ticker = (message: string, backgroundColor: string, color: string): Fc => 
 const messageButton = (buttonLabel: string, text: string, backgroundColor: string, style: 'primary' | 'secondary' = 'primary'): Fc => ({
   type: 'button',
   style,
-  height: 'sm',
+  height: style === 'primary' ? 'md' : 'sm',
   color: backgroundColor,
   action: { type: 'message', label: buttonLabel, text },
 })
@@ -193,7 +201,7 @@ const doneButton = (task: Record<string, unknown>): Fc => {
     type: 'button',
     style: 'secondary',
     height: 'sm',
-    color: g.sageFrost,
+    color: g.mint,
     action,
   }
 }
@@ -206,7 +214,9 @@ const footerBar = (...buttons: Fc[]): Fc => ({
   paddingBottom: 'xl',
   paddingStart: 'lg',
   paddingEnd: 'lg',
-  backgroundColor: g.frost,
+  backgroundColor: g.white,
+  borderWidth: '2px',
+  borderColor: g.ink,
   contents: buttons,
 })
 
@@ -215,7 +225,7 @@ const shell = (body: Fc[], footer?: Fc): Record<string, unknown> => ({
   size: 'mega',
   styles: {
     body: { backgroundColor: g.paper },
-    footer: { backgroundColor: g.frost, separator: true, separatorColor: g.hairline },
+    footer: { backgroundColor: g.white, separator: true, separatorColor: g.ink },
   },
   body: {
     type: 'box',
@@ -234,40 +244,55 @@ const brandHero = (
   eyebrow: string,
   headline: string,
   subheadline: string,
-  height = '132px',
+  height = '170px',
 ): Fc => ({
   type: 'box',
-  layout: 'horizontal',
+  layout: 'vertical',
   height,
-  paddingAll: 'lg',
+  paddingTop: 'lg',
+  paddingStart: 'lg',
+  paddingEnd: 'lg',
+  paddingBottom: 'none',
   backgroundColor,
-  alignItems: 'center',
+  borderWidth: '2px',
+  borderColor: g.ink,
+  cornerRadius: '16px',
   contents: [
     {
       type: 'box',
-      layout: 'vertical',
+      layout: 'horizontal',
       flex: 1,
-      spacing: 'xs',
+      alignItems: 'center',
       contents: [
         {
           type: 'box',
-          layout: 'horizontal',
-          contents: [chip(eyebrow, g.inkMid, g.white + 'B8', borderColor)],
+          layout: 'vertical',
+          flex: 1,
+          spacing: 'xs',
+          contents: [
+            { type: 'box', layout: 'horizontal', contents: [chip(eyebrow, g.ink, g.white, g.ink)] },
+            t(headline, { size: 'xxl', weight: 'bold', color: g.ink, wrap: true, maxLines: 2, margin: 'sm' }),
+            t(subheadline, { size: 'xs', color: g.inkMid, wrap: true, maxLines: 2 }),
+          ],
         },
-        t(headline, { size: 'xl', weight: 'bold', color: g.ink, wrap: true, maxLines: 2, margin: 'sm' }),
-        t(subheadline, { size: 'xs', color: g.sub, wrap: true, maxLines: 2 }),
+        {
+          type: 'box',
+          layout: 'vertical',
+          width: '116px',
+          height: '116px',
+          alignItems: 'center',
+          justifyContent: 'center',
+          contents: [kokoImage(mood, 'xxl')],
+        },
       ],
     },
     {
       type: 'box',
-      layout: 'vertical',
-      width: '96px',
-      height: '96px',
-      cornerRadius: '48px',
-      backgroundColor: g.white + 'B8',
-      alignItems: 'center',
-      justifyContent: 'center',
-      contents: [kokoImage(mood, 'xxl')],
+      layout: 'horizontal',
+      height: '7px',
+      backgroundColor: borderColor,
+      cornerRadius: '4px',
+      contents: [],
     },
   ],
 })
@@ -412,17 +437,17 @@ export function createStatusFlex(count: number | null): LineFlexMessage {
     contents: shell(
       [
         brandHero(
-          clear ? g.sageFrost : g.roseFrost,
-          clear ? g.sageBorder : g.roseBorder,
+          clear ? g.mint : g.coral,
+          g.ink,
           clear ? 'happy' : 'alert',
           'Koko Status',
           clear ? 'วันนี้เคลียร์หมดแล้ว' : pending + ' งานรออยู่',
           clear ? 'พักได้อย่างสบายใจเลย' : 'เริ่มจากงานที่ใกล้ที่สุดก่อน',
         ),
         metricStrip([
-          metricTile(String(pending), 'Pending tasks', clear ? g.sageDeep : g.roseDeep, clear ? g.sageFrost : g.roseFrost, clear ? g.sageBorder : g.roseBorder),
+          metricTile(String(pending), 'Pending tasks', clear ? g.sageDeep : g.roseDeep, clear ? g.mint : g.coral, g.ink),
           metricTile(clear ? 'Ready' : 'Next', 'Your status', g.skyDeep, g.skyFrost, g.skyBorder),
-          metricTile('Koko', 'Study buddy', g.amberDeep, g.amberFrost, g.amberBorder),
+          metricTile('Koko', 'Study buddy', g.amberDeep, g.sun, g.ink),
         ]),
         {
           type: 'box',
@@ -436,8 +461,8 @@ export function createStatusFlex(count: number | null): LineFlexMessage {
                 label(clear ? 'All clear' : 'Small next step', clear ? g.sageDeep : g.roseDeep),
                 t(clear ? 'ถ้ามีแผนใหม่ บอก Koko ได้เลย' : 'ทำทีละงาน แล้วอย่าลืมพักด้วยนะ', { size: 'sm', color: g.sub, wrap: true, margin: 'sm' }),
               ],
-              clear ? g.sageFrost : g.roseFrost,
-              clear ? g.sageBorder : g.roseBorder,
+              clear ? g.mint : g.coral,
+              g.ink,
             ),
           ],
         },
@@ -463,10 +488,10 @@ export function createTaskDoneFlex(title: string): LineFlexMessage {
     altText: 'ทำงานเสร็จแล้ว: ' + taskTitle,
     contents: shell(
       [
-        brandHero(g.sageFrost, g.sageBorder, 'happy', 'Koko Win', 'ทำเสร็จแล้ว', taskTitle),
+        brandHero(g.mint, g.ink, 'happy', 'Koko Win', 'ทำเสร็จแล้ว', taskTitle),
         metricStrip([
-          metricTile('Done', 'Task status', g.sageDeep, g.sageFrost, g.sageBorder),
-          metricTile('+1', 'Small win', g.amberDeep, g.amberFrost, g.amberBorder),
+          metricTile('Done', 'Task status', g.sageDeep, g.mint, g.ink),
+          metricTile('+1', 'Small win', g.amberDeep, g.sun, g.ink),
         ]),
         {
           type: 'box',
@@ -477,8 +502,8 @@ export function createTaskDoneFlex(title: string): LineFlexMessage {
           contents: [
             panel(
               [t('ก้าวเล็กๆ แบบนี้รวมกันเป็น progress ใหญ่ได้จริง', { size: 'sm', color: g.sub, wrap: true })],
-              g.sageFrost,
-              g.sageBorder,
+              g.mint,
+              g.ink,
             ),
           ],
         },
@@ -500,11 +525,11 @@ export function createMorningReminderFlex(tasks: Array<Record<string, unknown>>,
   const estimatedMinutes = tasks.reduce((total, task) => total + Math.max(0, Number(task.estimated_minutes) || 0), 0)
   const rows = visible.map((task, index) => taskRow(task, index))
   const body: Fc[] = [
-    brandHero(g.amberFrost, g.amberBorder, 'study', 'Good Morning', 'แผนวันนี้', date + ' · ' + tasks.length + ' งานรออยู่'),
+    brandHero(g.sun, g.ink, 'study', 'Good Morning', 'แผนวันนี้', date + ' · ' + tasks.length + ' งานรออยู่'),
     metricStrip([
-      metricTile(String(tasks.length), 'Tasks', g.amberDeep, g.amberFrost, g.amberBorder),
-      metricTile(String(urgentCount), 'Urgent', g.roseDeep, g.roseFrost, g.roseBorder),
-      metricTile(estimatedMinutes > 0 ? estimatedMinutes + 'm' : '—', 'Est. focus', g.skyDeep, g.skyFrost, g.skyBorder),
+      metricTile(String(tasks.length), 'Tasks', g.amberDeep, g.sun, g.ink),
+      metricTile(String(urgentCount), 'Urgent', g.roseDeep, g.coral, g.ink),
+      metricTile(estimatedMinutes > 0 ? estimatedMinutes + 'm' : '—', 'Est. focus', g.skyDeep, g.skyBright, g.ink),
     ]),
     {
       type: 'box',
@@ -520,7 +545,7 @@ export function createMorningReminderFlex(tasks: Array<Record<string, unknown>>,
 
   if (tasks.length > visible.length) body.push(extraRow(tasks.length - visible.length, g.amber))
   body.push(hr())
-  body.push(ticker('เริ่มจากงานเล็กที่สุดก่อนก็ได้', g.amberFrost, g.amber))
+  body.push(ticker('เริ่มจากงานเล็กที่สุดก่อนก็ได้', g.sun, g.ink))
 
   return {
     type: 'flex',
@@ -545,10 +570,10 @@ export function createTasksFlex(tasks: Array<Record<string, unknown>>): LineFlex
       altText: 'ไม่มีงานค้างแล้ว',
       contents: shell(
         [
-          brandHero(g.sageFrost, g.sageBorder, 'cozy', 'Koko To-Do', 'ไม่มีงานค้างแล้ว', 'พักหายใจได้เลย หรือเริ่มแผนใหม่เมื่อพร้อม'),
+          brandHero(g.mint, g.ink, 'cozy', 'Koko To-Do', 'ไม่มีงานค้างแล้ว', 'พักหายใจได้เลย หรือเริ่มแผนใหม่เมื่อพร้อม'),
           metricStrip([
-            metricTile('0', 'Pending', g.sageDeep, g.sageFrost, g.sageBorder),
-            metricTile('100%', 'Clear', g.skyDeep, g.skyFrost, g.skyBorder),
+            metricTile('0', 'Pending', g.sageDeep, g.mint, g.ink),
+            metricTile('100%', 'Clear', g.skyDeep, g.skyBright, g.ink),
           ]),
           {
             type: 'box',
@@ -559,8 +584,8 @@ export function createTasksFlex(tasks: Array<Record<string, unknown>>): LineFlex
             contents: [
               panel(
                 [t('หน้า inbox สะอาดแล้ว เก่งมากครับ', { size: 'sm', color: g.sub, wrap: true })],
-                g.sageFrost,
-                g.sageBorder,
+                g.mint,
+                g.ink,
               ),
             ],
           },
@@ -576,17 +601,17 @@ export function createTasksFlex(tasks: Array<Record<string, unknown>>): LineFlex
 
   const body: Fc[] = [
     brandHero(
-      urgentCount > 0 ? g.roseFrost : g.skyFrost,
-      urgentCount > 0 ? g.roseBorder : g.skyBorder,
+      urgentCount > 0 ? g.coral : g.skyBright,
+      g.ink,
       urgentCount > 0 ? 'alert' : 'laptop',
       'Koko To-Do',
       tasks.length + ' งานที่ต้องดู',
       urgentCount > 0 ? urgentCount + ' งานควรจัดการก่อน' : 'เลือกทีละงาน แล้วเดินหน้าต่อ',
     ),
     metricStrip([
-      metricTile(String(tasks.length), 'Pending', g.roseDeep, g.roseFrost, g.roseBorder),
-      metricTile(String(urgentCount), 'Urgent', g.amberDeep, g.amberFrost, g.amberBorder),
-      metricTile(estimatedMinutes > 0 ? estimatedMinutes + 'm' : '—', 'Est. focus', g.skyDeep, g.skyFrost, g.skyBorder),
+      metricTile(String(tasks.length), 'Pending', g.roseDeep, g.coral, g.ink),
+      metricTile(String(urgentCount), 'Urgent', g.amberDeep, g.sun, g.ink),
+      metricTile(estimatedMinutes > 0 ? estimatedMinutes + 'm' : '—', 'Est. focus', g.skyDeep, g.skyBright, g.ink),
     ]),
     {
       type: 'box',
@@ -625,10 +650,10 @@ export function createEventsFlex(events: Array<Record<string, unknown>>): LineFl
       altText: 'ยังไม่มีวันสำคัญ',
       contents: shell(
         [
-          brandHero(g.irisFrost, g.irisBorder, 'peek', 'Koko Calendar', 'ปฏิทินยังว่างอยู่', 'เพิ่มสอบ แข่งขัน หรือวันสำคัญได้เลย'),
+          brandHero(g.violetBright, g.ink, 'peek', 'Koko Calendar', 'ปฏิทินยังว่างอยู่', 'เพิ่มสอบ แข่งขัน หรือวันสำคัญได้เลย'),
           metricStrip([
-            metricTile('0', 'Upcoming', g.irisDeep, g.irisFrost, g.irisBorder),
-            metricTile('Ready', 'Plan ahead', g.skyDeep, g.skyFrost, g.skyBorder),
+            metricTile('0', 'Upcoming', g.irisDeep, g.violetBright, g.ink),
+            metricTile('Ready', 'Plan ahead', g.skyDeep, g.skyBright, g.ink),
           ]),
           {
             type: 'box',
@@ -639,8 +664,8 @@ export function createEventsFlex(events: Array<Record<string, unknown>>): LineFl
             contents: [
               panel(
                 [t('เพิ่มหมุดหมายไว้ แล้ว Koko จะช่วยเตือนให้', { size: 'sm', color: g.sub, wrap: true })],
-                g.irisFrost,
-                g.irisBorder,
+                g.violetBright,
+                g.ink,
               ),
             ],
           },
@@ -654,11 +679,11 @@ export function createEventsFlex(events: Array<Record<string, unknown>>): LineFl
   const examCount = events.filter((event) => compact(event.type) === 'exam').length
   const firstStyle = eventStyle(compact(visible[0]?.type, 'important'))
   const body: Fc[] = [
-    brandHero(g.irisFrost, g.irisBorder, firstStyle.mood, 'Koko Calendar', events.length + ' วันสำคัญ', examCount > 0 ? examCount + ' การสอบที่ต้องเตรียมตัว' : 'มองภาพรวม แล้ววางแผนล่วงหน้า'),
+    brandHero(g.violetBright, g.ink, firstStyle.mood, 'Koko Calendar', events.length + ' วันสำคัญ', examCount > 0 ? examCount + ' การสอบที่ต้องเตรียมตัว' : 'มองภาพรวม แล้ววางแผนล่วงหน้า'),
     metricStrip([
-      metricTile(String(events.length), 'Upcoming', g.irisDeep, g.irisFrost, g.irisBorder),
-      metricTile(String(examCount), 'Exams', g.roseDeep, g.roseFrost, g.roseBorder),
-      metricTile('Plan', 'Ahead', g.skyDeep, g.skyFrost, g.skyBorder),
+      metricTile(String(events.length), 'Upcoming', g.irisDeep, g.violetBright, g.ink),
+      metricTile(String(examCount), 'Exams', g.roseDeep, g.coral, g.ink),
+      metricTile('Plan', 'Ahead', g.skyDeep, g.skyBright, g.ink),
     ]),
     {
       type: 'box',
