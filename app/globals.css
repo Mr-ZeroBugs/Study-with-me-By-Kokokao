@@ -1311,3 +1311,173 @@ html[data-theme="dark-glass"] .mode-button.active {
   background: rgba(255, 255, 255, .12) !important;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .10) !important;
 }
+
+/* Final contrast pass: navigation and data surfaces keep their semantic color. */
+html[data-theme="light"] .bottom-nav a,
+html[data-theme="light"] .bottom-nav a svg {
+  color: #475569 !important;
+}
+html[data-theme="light"] .bottom-nav a {
+  font-weight: 600;
+}
+html[data-theme="light"] .bottom-nav a.active,
+html[data-theme="light"] .bottom-nav a.active svg {
+  color: #172033 !important;
+}
+
+/* Theme choices should preview the current glass shell, not fall back to the
+   pink Cozy Paper selection color when Dark Glass is active. */
+html[data-theme="light"] .settings-theme-option {
+  background: rgba(255, 255, 255, .42) !important;
+  border-color: rgba(100, 116, 139, .18) !important;
+  color: #64748b !important;
+  box-shadow: none !important;
+}
+html[data-theme="light"] .settings-theme-option:hover {
+  background: rgba(255, 255, 255, .72) !important;
+  border-color: rgba(71, 85, 105, .32) !important;
+}
+html[data-theme="light"] .settings-theme-option[data-active="true"] {
+  background: rgba(23, 32, 51, .09) !important;
+  border-color: rgba(23, 32, 51, .38) !important;
+  color: #172033 !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .72), 0 0 0 2px rgba(23, 32, 51, .06) !important;
+}
+
+html[data-theme="dark-glass"] .bottom-nav a,
+html[data-theme="dark-glass"] .bottom-nav a svg {
+  color: rgba(226, 232, 240, .72) !important;
+}
+html[data-theme="dark-glass"] .bottom-nav a.active,
+html[data-theme="dark-glass"] .bottom-nav a.active svg {
+  color: #f8fafc !important;
+}
+html[data-theme="dark-glass"] .settings-theme-option {
+  background: rgba(255, 255, 255, .045) !important;
+  border-color: rgba(255, 255, 255, .13) !important;
+  color: rgba(226, 232, 240, .76) !important;
+  box-shadow: none !important;
+}
+html[data-theme="dark-glass"] .settings-theme-option:hover {
+  background: rgba(255, 255, 255, .09) !important;
+  border-color: rgba(255, 255, 255, .24) !important;
+}
+html[data-theme="dark-glass"] .settings-theme-option[data-active="true"] {
+  background: rgba(255, 255, 255, .12) !important;
+  border-color: rgba(255, 255, 255, .34) !important;
+  color: #f8fafc !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16), 0 0 0 2px rgba(255, 255, 255, .08) !important;
+}
+
+/* Subject breakdown uses a translucent center and rows in glass themes;
+   subject swatches and the donut itself remain data-driven accents. */
+html[data-theme="light"] .subject-row:hover,
+html[data-theme="light"] .subject-row.active,
+html[data-theme="light"] .subject-empty,
+html[data-theme="light"] .donut-center {
+  background: rgba(255, 255, 255, .52) !important;
+  border-color: rgba(100, 116, 139, .16) !important;
+}
+html[data-theme="light"] .subject-row:hover,
+html[data-theme="light"] .subject-row.active {
+  color: #172033 !important;
+}
+html[data-theme="light"] .subject-empty {
+  border-style: dashed !important;
+}
+
+html[data-theme="dark-glass"] .subject-row:hover,
+html[data-theme="dark-glass"] .subject-row.active,
+html[data-theme="dark-glass"] .subject-empty,
+html[data-theme="dark-glass"] .donut-center {
+  background: rgba(255, 255, 255, .075) !important;
+  border-color: rgba(255, 255, 255, .14) !important;
+  color: #f3f6fb !important;
+}
+html[data-theme="dark-glass"] .subject-row:hover,
+html[data-theme="dark-glass"] .subject-row.active {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08) !important;
+}
+html[data-theme="dark-glass"] .subject-empty {
+  border-style: dashed !important;
+}
+html[data-theme="dark-glass"] .subject-analytics-footer,
+html[data-theme="dark-glass"] .subject-total {
+  border-color: rgba(255, 255, 255, .14) !important;
+}
+
+/* Empty heatmap cells stay quiet; only actual study levels carry color. */
+html[data-theme="dark-glass"] .stats-calendar-day.level-0,
+html[data-theme="dark-glass"] .stats-calendar-legend i.level-0 {
+  background: rgba(255, 255, 255, .035) !important;
+  border-color: rgba(255, 255, 255, .09) !important;
+  color: rgba(226, 232, 240, .74) !important;
+}
+
+/* One cool-blue heat scale reads more clearly on obsidian than the previous
+   mix of pale green, cyan and purple fills. */
+html[data-theme="dark-glass"] .stats-calendar-day.level-1,
+html[data-theme="dark-glass"] .stats-calendar-legend i.level-1 {
+  background: rgba(96, 165, 250, .18) !important;
+  border-color: rgba(96, 165, 250, .34) !important;
+  color: #bfdbfe !important;
+}
+html[data-theme="dark-glass"] .stats-calendar-day.level-2,
+html[data-theme="dark-glass"] .stats-calendar-legend i.level-2 {
+  background: rgba(96, 165, 250, .32) !important;
+  border-color: rgba(96, 165, 250, .48) !important;
+  color: #dbeafe !important;
+}
+html[data-theme="dark-glass"] .stats-calendar-day.level-3,
+html[data-theme="dark-glass"] .stats-calendar-legend i.level-3 {
+  background: rgba(59, 130, 246, .48) !important;
+  border-color: rgba(96, 165, 250, .64) !important;
+  color: #eff6ff !important;
+}
+html[data-theme="dark-glass"] .stats-calendar-day.level-4,
+html[data-theme="dark-glass"] .stats-calendar-legend i.level-4 {
+  background: rgba(37, 99, 235, .70) !important;
+  border-color: rgba(147, 197, 253, .72) !important;
+  color: #ffffff !important;
+}
+html[data-theme="dark-glass"] .stats-calendar-day.selected,
+html[data-theme="dark-glass"] .notebook-calendar-day.selected {
+  outline: 2px solid rgba(226, 232, 240, .78) !important;
+  border-color: rgba(226, 232, 240, .72) !important;
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, .14) !important;
+}
+
+html[data-theme="dark-glass"] .stats-kpi-icon {
+  background: rgba(255, 255, 255, .10) !important;
+  border: 1px solid rgba(255, 255, 255, .14) !important;
+}
+html[data-theme="dark-glass"] .stats-kpi.total .stats-kpi-icon { color: #86efac !important; }
+html[data-theme="dark-glass"] .stats-kpi.longest .stats-kpi-icon { color: #93c5fd !important; }
+html[data-theme="dark-glass"] .stats-kpi.active-days .stats-kpi-icon { color: #fde68a !important; }
+
+html[data-theme="dark-glass"] .stats-range-tabs button.active,
+html[data-theme="dark-glass"] .range-picker button.active {
+  background: rgba(255, 255, 255, .14) !important;
+  border: 1px solid rgba(255, 255, 255, .20) !important;
+  color: #f8fafc !important;
+  box-shadow: none !important;
+}
+
+html[data-theme="dark-glass"] .settings-intensity-panel {
+  background: rgba(255, 255, 255, .045) !important;
+  border-color: rgba(255, 255, 255, .14) !important;
+}
+html[data-theme="dark-glass"] .settings-intensity-value {
+  background: rgba(255, 255, 255, .11) !important;
+  border-color: rgba(255, 255, 255, .20) !important;
+  color: #dbeafe !important;
+}
+html[data-theme="dark-glass"] .settings-intensity-panel button[data-active="true"] {
+  background: rgba(255, 255, 255, .14) !important;
+  border-color: rgba(255, 255, 255, .28) !important;
+  color: #f8fafc !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12) !important;
+}
+html[data-theme="dark-glass"] .settings-intensity-panel input[type="range"] {
+  accent-color: #93c5fd !important;
+}

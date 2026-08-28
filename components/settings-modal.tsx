@@ -259,7 +259,8 @@ export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsMod
                   <button
                     key={id}
                     onClick={() => handleThemeChange(id as AppTheme)}
-                    className={`flex flex-col items-center justify-center gap-2 p-3 rounded-xl border transition ${
+                    data-active={currentTheme === id ? 'true' : 'false'}
+                    className={`settings-theme-option settings-theme-option-${id} flex flex-col items-center justify-center gap-2 p-3 rounded-xl border transition ${
                       currentTheme === id
                         ? 'border-[#ee8d92] bg-[#fff5f5] text-ink font-bold shadow-xs'
                         : 'border-line bg-paper/60 text-muted-ink hover:border-[#ee8d92]/50 hover:text-ink'
@@ -273,7 +274,7 @@ export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsMod
             </div>
 
             {/* Intensity Setting */}
-            <div className="rounded-2xl border border-line bg-paper/60 p-4 space-y-3">
+            <div className="settings-intensity-panel rounded-2xl border border-line bg-paper/60 p-4 space-y-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5 text-[11px] font-bold leading-tight text-ink">
@@ -284,7 +285,7 @@ export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsMod
                     calendar intensity · darkest shade
                   </p>
                 </div>
-                <span className="inline-flex shrink-0 items-baseline gap-0.5 rounded-full border border-[#f0c4c8] bg-[#fff5f5] px-2 py-1 font-mono text-[9px] font-bold leading-none text-[#c96d76] whitespace-nowrap">
+                <span className="settings-intensity-value inline-flex shrink-0 items-baseline gap-0.5 rounded-full border border-[#f0c4c8] bg-[#fff5f5] px-2 py-1 font-mono text-[9px] font-bold leading-none text-[#c96d76] whitespace-nowrap">
                   {formatThreshold(intensityMinutes)}
                   <span className="font-sans text-[8px] font-semibold">/ day</span>
                 </span>
@@ -296,6 +297,7 @@ export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsMod
                   <button
                     key={p.value}
                     onClick={() => handleIntensityChange(p.value)}
+                    data-active={intensityMinutes === p.value ? 'true' : 'false'}
                     className={`py-1.5 rounded-lg text-[10px] font-mono border transition ${
                       intensityMinutes === p.value
                         ? 'bg-[#ee8d92] text-white border-[#ee8d92] font-bold shadow-xs'
