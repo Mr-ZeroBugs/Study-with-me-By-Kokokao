@@ -1,555 +1,473 @@
 import type { LineFlexMessage } from '@/lib/line'
 
-// ── Palette ─────────────────────────────────────────────────────────────────
-// Warm cozy tones that mirror globals.css design tokens
-const p = {
-  ink:         '#49362C',
-  inkDark:     '#2E1F16',
-  muted:       '#8A756A',
-  paper:       '#FFFDF7',
-  paperWarm:   '#FFFAF2',
-  cream:       '#F9F1E8',
-  line:        '#E9DED2',
-  lineLight:   '#F0E6DC',
+// ─────────────────────────────────────────────────────────────────────────────
+//  LINE Flex Message — Liquid Glass aesthetic
+//
+//  Design language:
+//  • Zero emoji — ALL CAPS micro-labels only
+//  • linearGradient hero = "glass" depth without images
+//  • Frosted-panel illusion = pale tint bg + 1px white-ish border
+//  • White "sheen" strip at top of gradient = liquid glass highlight
+//  • Clean typographic hierarchy: xxs label → xl headline → xs body
+//  • Muted, sophisticated palette (no saturated primaries)
+//  • Maximum negative space
+// ─────────────────────────────────────────────────────────────────────────────
 
-  blue:        '#5E86B0',
-  blueMid:     '#7D9FC9',
-  blueSoft:    '#E7EFF8',
-  blueDeep:    '#A9CCE8',
+// ── Palette ───────────────────────────────────────────────────────────────────
+// Each accent has four stops: deep (text) → mid (border) → frost (bg panel) → shine (highlight strip)
+const g = {
+  // Neutrals
+  void:     '#1A1210',     // deepest ink
+  ink:      '#2E1F16',
+  inkMid:   '#49362C',
+  sub:      '#7A6860',
+  ghost:    '#B0A098',
+  paper:    '#FDFBF8',
+  warm:     '#FAF6F0',
+  frost:    '#F5EFE8',     // "frosted glass" base
+  hairline: '#E8DFD6',
+  white:    '#FFFFFF',
 
-  peach:       '#E87A82',
-  peachMid:    '#F1B49F',
-  peachSoft:   '#FCE8E1',
-  peachDeep:   '#F0C9C9',
+  // Rose — status busy / task
+  rDeep:    '#8B2030',
+  rMid:     '#C84050',
+  rFrost:   '#FAF0F2',
+  rShine:   '#FFE8EC',
+  rBorder:  '#F0C8D0',
 
-  green:       '#5C9774',
-  greenMid:    '#78A98E',
-  greenSoft:   '#E7F2EA',
-  greenDeep:   '#C5EAD7',
+  // Sage — done / success
+  sDeep:    '#1E5040',
+  sMid:     '#3A7A5E',
+  sFrost:   '#EFF7F2',
+  sShine:   '#D8EFE4',
+  sBorder:  '#B8DCCB',
 
-  purple:      '#8B6DAC',
-  purpleMid:   '#9B8AB8',
-  purpleSoft:  '#EEEAF5',
-  purpleDeep:  '#DAC4EC',
+  // Sky — index / info
+  kDeep:    '#1A3858',
+  kMid:     '#2E6090',
+  kFrost:   '#EFF5FB',
+  kShine:   '#D4E8F5',
+  kBorder:  '#B8D4EA',
 
-  yellow:      '#C8922A',
-  yellowSoft:  '#FFF7D9',
-  yellowDeep:  '#F4DD8C',
+  // Iris — calendar / events
+  iDeep:    '#3A2060',
+  iMid:     '#6848A8',
+  iFrost:   '#F2EFF8',
+  iShine:   '#E0D8F2',
+  iBorder:  '#C8BAE8',
+
+  // Amber — morning / priority-2
+  aDeep:    '#5C3A08',
+  aMid:     '#A06820',
+  aFrost:   '#FBF5E8',
+  aShine:   '#F0E0B8',
+  aBorder:  '#DEC898',
 }
 
-type FlexComponent = Record<string, unknown>
+type Fc = Record<string, unknown>
 
-// ── Primitives ───────────────────────────────────────────────────────────────
+// ── Primitives ────────────────────────────────────────────────────────────────
 
-const txt = (value: string, opts: FlexComponent = {}): FlexComponent => ({
-  type: 'text',
-  text: value,
-  color: p.ink,
-  ...opts,
-})
+const t = (value: string, o: Fc = {}): Fc =>
+  ({ type: 'text', text: value, color: g.inkMid, ...o })
 
-const sep = (color = p.line): FlexComponent => ({
-  type: 'separator',
-  color,
-  margin: 'none',
-})
+const hr = (color = g.hairline): Fc =>
+  ({ type: 'separator', color, margin: 'none' })
 
-// Rounded pill / badge component
-const badge = (label: string, color: string, bg: string): FlexComponent => ({
-  type: 'box',
-  layout: 'vertical',
+// Micro label — ALL CAPS, tiny, tracks well
+const label = (text: string, color: string): Fc =>
+  t(text.toUpperCase(), { size: 'xxs', color, weight: 'bold' })
+
+// Slim pill — no emoji, caps text only
+const chip = (text: string, textColor: string, bg: string, border: string): Fc => ({
+  type: 'box', layout: 'vertical',
   backgroundColor: bg,
-  cornerRadius: '20px',
-  paddingTop: 'xs',
-  paddingBottom: 'xs',
-  paddingStart: 'sm',
-  paddingEnd: 'sm',
-  contents: [txt(label, { size: 'xxs', color, weight: 'bold', align: 'center' })],
+  cornerRadius: '4px',
+  paddingTop: 'xs', paddingBottom: 'xs',
+  paddingStart: 'md', paddingEnd: 'md',
+  borderWidth: '1px', borderColor: border,
+  contents: [label(text, textColor)],
 })
 
-// Small filled dot accent
-const dot = (color: string): FlexComponent => ({
-  type: 'box',
-  layout: 'vertical',
-  width: '8px',
-  height: '8px',
-  cornerRadius: '10px',
-  backgroundColor: color,
-  contents: [],
+// Square icon cell — no emoji, just a flat colored square with a letter/number
+const iconCell = (content: string, size: string, textColor: string, bg: string, border: string): Fc => ({
+  type: 'box', layout: 'vertical',
+  width: size, height: size,
+  cornerRadius: '8px',
+  backgroundColor: bg,
+  borderWidth: '1px', borderColor: border,
+  alignItems: 'center', justifyContent: 'center',
+  contents: [t(content, { size: 'sm', weight: 'bold', color: textColor, align: 'center' })],
 })
 
-// ── Header Band ──────────────────────────────────────────────────────────────
-// Two-tone header: tinted eyebrow strip + left-accent title bar
-const headerBand = (eyebrow: string, title: string, accentColor: string, accentBg: string): FlexComponent[] => [
-  // Top strip: brand name + eyebrow badge
-  {
-    type: 'box',
-    layout: 'horizontal',
-    backgroundColor: accentBg,
-    paddingTop: 'md',
-    paddingBottom: 'md',
-    paddingStart: 'xl',
-    paddingEnd: 'xl',
-    alignItems: 'center',
-    contents: [
-      {
-        type: 'box',
-        layout: 'vertical',
-        flex: 1,
-        contents: [
-          txt('Study Manager', { size: 'xs', weight: 'bold', color: accentColor }),
-          txt('.koko', { size: 'xxs', color: p.muted }),
-        ],
-      },
-      badge(eyebrow, accentColor, p.paper),
-    ],
+// ── GLASS HERO BANNER ─────────────────────────────────────────────────────────
+// Technique breakdown:
+//   1. Box with linearGradient (deep → mid color)
+//   2. Absolute white "sheen" strip at top → liquid-glass highlight
+//   3. Absolute frosted panel in the middle → frosted glass content area
+//   4. Text sits inside the frosted panel
+const glassHero = (
+  gradDeep: string,
+  gradMid:  string,
+  angle:    string,
+  eyebrow:  string,
+  headline: string,
+  sub:      string,
+  height = '140px',
+): Fc => ({
+  type: 'box', layout: 'vertical', height, paddingAll: 'none',
+  background: {
+    type: 'linearGradient',
+    angle,
+    startColor: gradDeep,
+    endColor: gradMid,
   },
-  // Title row with left accent bar
-  {
-    type: 'box',
-    layout: 'horizontal',
-    paddingTop: 'lg',
-    paddingBottom: 'md',
-    paddingStart: 'xl',
-    paddingEnd: 'xl',
-    alignItems: 'center',
-    spacing: 'md',
-    contents: [
-      {
-        type: 'box',
-        layout: 'vertical',
-        width: '4px',
-        height: '24px',
-        cornerRadius: '4px',
-        backgroundColor: accentColor,
-        contents: [],
-      },
-      txt(title, { size: 'xl', weight: 'bold', color: p.inkDark, wrap: true, flex: 1 }),
-    ],
-  },
-]
-
-// ── CTA Buttons ──────────────────────────────────────────────────────────────
-const ctaBtn = (label: string, message: string, bg: string, opts: FlexComponent = {}): FlexComponent => ({
-  type: 'button',
-  style: 'primary',
-  height: 'sm',
-  color: bg,
-  action: { type: 'message', label, text: message },
-  ...opts,
+  contents: [
+    // Relative base keeps absolute overlays valid and fills the fixed hero height.
+    {
+      type: 'box', layout: 'vertical', flex: 1, contents: [],
+    },
+    // White sheen strip — liquid glass highlight at the top
+    {
+      type: 'box', layout: 'vertical',
+      position: 'absolute',
+      offsetTop: '0px', offsetStart: '0px', offsetEnd: '0px',
+      height: '2px',
+      backgroundColor: '#FFFFFF70',
+      contents: [],
+    },
+    // Frosted glass content panel
+    {
+      type: 'box', layout: 'vertical',
+      position: 'absolute',
+      offsetTop: '0px', offsetBottom: '0px',
+      offsetStart: '0px', offsetEnd: '0px',
+      paddingAll: 'xl', paddingBottom: 'xl',
+      justifyContent: 'flex-end',
+      contents: [
+        // Eyebrow label
+        {
+          type: 'box', layout: 'horizontal',
+          margin: 'sm',
+          contents: [
+            {
+              type: 'box', layout: 'vertical',
+              backgroundColor: '#FFFFFF22',
+              cornerRadius: '3px',
+              paddingTop: 'xs', paddingBottom: 'xs',
+              paddingStart: 'sm', paddingEnd: 'sm',
+              borderWidth: '1px', borderColor: '#FFFFFF40',
+              contents: [t(eyebrow.toUpperCase(), { size: 'xxs', color: '#FFFFFFCC', weight: 'bold' })],
+            },
+            { type: 'box', layout: 'vertical', flex: 1, contents: [] },
+          ],
+        },
+        // Headline
+        t(headline, { size: 'xxl', weight: 'bold', color: '#FDFBF8', wrap: true }),
+        // Sub
+        t(sub, { size: 'xs', color: '#FFFFFFAA', wrap: true, margin: 'xs' }),
+      ],
+    },
+  ],
 })
 
-const ghostBtn = (label: string, message: string, opts: FlexComponent = {}): FlexComponent => ({
-  type: 'button',
-  style: 'secondary',
-  height: 'sm',
-  color: p.paper,
-  action: { type: 'message', label, text: message },
-  ...opts,
+// ── Glass panel (body section) ────────────────────────────────────────────────
+// Frosted card inside white body — pale tinted bg + thin border = glass illusion
+const glassPanel = (contents: Fc[], bg: string, border: string): Fc => ({
+  type: 'box', layout: 'vertical',
+  backgroundColor: bg,
+  cornerRadius: '12px',
+  paddingAll: 'xl',
+  borderWidth: '1px', borderColor: border,
+  contents,
 })
 
-// ── Footer strip (warm cream background) ─────────────────────────────────────
-const footerStrip = (...buttons: FlexComponent[]): FlexComponent => ({
-  type: 'box',
-  layout: 'horizontal',
-  spacing: 'sm',
-  paddingTop: 'md',
-  paddingBottom: 'lg',
-  paddingStart: 'lg',
-  paddingEnd: 'lg',
-  backgroundColor: p.cream,
-  contents: buttons,
+// ── Ticker ────────────────────────────────────────────────────────────────────
+const ticker = (text: string, bg: string, textColor: string): Fc => ({
+  type: 'box', layout: 'horizontal',
+  backgroundColor: bg,
+  paddingTop: 'md', paddingBottom: 'md',
+  paddingStart: 'xl', paddingEnd: 'xl',
+  alignItems: 'center',
+  contents: [
+    { type: 'box', layout: 'vertical', width: '2px', height: '14px', backgroundColor: textColor, cornerRadius: '2px', contents: [] },
+    t(text, { size: 'xs', color: textColor, weight: 'bold', wrap: true, flex: 1, margin: 'md' }),
+  ],
 })
 
-// ── Bubble shell ─────────────────────────────────────────────────────────────
-const bubble = (body: FlexComponent[], footer?: FlexComponent): Record<string, unknown> => ({
-  type: 'bubble',
-  size: 'mega',
+// ── Buttons ───────────────────────────────────────────────────────────────────
+const solidBtn = (label_: string, msg: string, bg: string): Fc => ({
+  type: 'button', style: 'primary', height: 'sm', color: bg,
+  action: { type: 'message', label: label_, text: msg },
+})
+const ghostBtn = (label_: string, msg: string): Fc => ({
+  type: 'button', style: 'secondary', height: 'sm', color: g.hairline,
+  action: { type: 'message', label: label_, text: msg },
+})
+const footerBar = (...btns: Fc[]): Fc => ({
+  type: 'box', layout: 'horizontal', spacing: 'sm',
+  paddingTop: 'lg', paddingBottom: 'xl',
+  paddingStart: 'lg', paddingEnd: 'lg',
+  backgroundColor: g.frost,
+  contents: btns,
+})
+
+// ── Bubble shell ──────────────────────────────────────────────────────────────
+const shell = (body: Fc[], footer?: Fc): Record<string, unknown> => ({
+  type: 'bubble', size: 'mega',
   styles: {
-    body:   { backgroundColor: p.paper },
-    footer: { backgroundColor: p.cream, separator: true, separatorColor: p.lineLight },
+    body:   { backgroundColor: g.paper },
+    footer: { backgroundColor: g.frost, separator: true, separatorColor: g.hairline },
   },
   body: {
-    type: 'box',
-    layout: 'vertical',
-    spacing: 'none',
-    paddingAll: 'none',
+    type: 'box', layout: 'vertical', spacing: 'none', paddingAll: 'none',
     contents: body,
   },
   ...(footer ? { footer } : {}),
 })
 
-// ── Priority / event style maps ───────────────────────────────────────────────
-function priorityStyle(priority: number | null | undefined): { label: string; color: string; soft: string } {
-  if (priority === 3) return { label: '🔴 ด่วน',   color: '#C0504D', soft: '#FBE5E1' }
-  if (priority === 2) return { label: '🟡 ปกติ',   color: '#A07840', soft: '#F8EEDC' }
-  return                     { label: '🟢 ทั่วไป', color: p.green,  soft: p.greenSoft }
+// ── Priority map ──────────────────────────────────────────────────────────────
+function prioStyle(n: number | null | undefined) {
+  if (n === 3) return { label: 'Urgent',  textColor: g.rDeep, bg: g.rFrost, border: g.rBorder, accent: g.rMid  }
+  if (n === 2) return { label: 'Normal',  textColor: g.aDeep, bg: g.aFrost, border: g.aBorder, accent: g.aMid  }
+  return              { label: 'Low',     textColor: g.sDeep, bg: g.sFrost, border: g.sBorder, accent: g.sMid  }
 }
 
-function eventStyle(type: string | undefined): { label: string; color: string; soft: string } {
-  if (type === 'exam')        return { label: '📝 สอบ',      color: '#C0504D', soft: '#FBE5E1' }
-  if (type === 'competition') return { label: '🏆 แข่งขัน',  color: '#A07840', soft: '#F8EEDC' }
-  if (type === 'project')     return { label: '💻 โปรเจกต์', color: p.blue,   soft: p.blueSoft }
-  return                              { label: '⭐ สำคัญ',    color: p.purple, soft: p.purpleSoft }
+function evStyle(type: string | undefined) {
+  if (type === 'exam')        return { label: 'Exam',        textColor: g.rDeep, bg: g.rFrost, border: g.rBorder, accent: g.rMid  }
+  if (type === 'competition') return { label: 'Competition', textColor: g.aDeep, bg: g.aFrost, border: g.aBorder, accent: g.aMid  }
+  if (type === 'project')     return { label: 'Project',     textColor: g.kDeep, bg: g.kFrost, border: g.kBorder, accent: g.kMid  }
+  return                              { label: 'Important',  textColor: g.iDeep, bg: g.iFrost, border: g.iBorder, accent: g.iMid  }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
 //  STATUS CARD
-// ════════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
 export function createStatusFlex(count: number | null): LineFlexMessage {
-  const taskCount = Math.max(0, count ?? 0)
-  const hasTasks  = taskCount > 0
+  const n    = Math.max(0, count ?? 0)
+  const busy = n > 0
 
-  const accentColor = hasTasks ? p.peach  : p.green
-  const accentBg    = hasTasks ? p.peachSoft : p.greenSoft
-  const heroGradBg  = hasTasks ? '#FEF0ED' : '#EBF5EE'
-  const heroBorder  = hasTasks ? p.peachDeep : p.greenDeep
+  const heroDeep  = busy ? '#6B1520' : '#1A4030'
+  const heroMid   = busy ? '#C84050' : '#2E7A58'
+  const panelBg   = busy ? g.rFrost  : g.sFrost
+  const panelBdr  = busy ? g.rBorder : g.sBorder
+  const numColor  = busy ? g.rMid    : g.sMid
 
   return {
     type: 'flex',
-    altText: `Study Manager.koko · งานค้าง ${taskCount} รายการ`,
-    contents: bubble(
+    altText: `Study Manager · ${busy ? `งานค้าง ${n} รายการ` : 'ไม่มีงานค้าง'}`,
+    contents: shell(
       [
-        // ── Branded header ──
-        ...headerBand(
-          hasTasks ? 'TO-DO' : 'ALL CLEAR',
-          hasTasks ? 'สรุปสถานะของคุณ' : 'คุณเคลียร์หมดแล้ว!',
-          accentColor,
-          accentBg,
+        glassHero(
+          heroDeep, heroMid, '145deg',
+          'Study Manager.koko · Status',
+          busy ? `${n} รายการรออยู่` : 'เสร็จทั้งหมดแล้ว',
+          busy ? 'ค่อยๆ ทำทีละอย่าง' : 'วันนี้ดีมาก',
         ),
 
-        // ── Hero stat box ──
         {
-          type: 'box',
-          layout: 'vertical',
-          paddingStart: 'xl',
-          paddingEnd: 'xl',
-          paddingBottom: 'lg',
+          type: 'box', layout: 'vertical',
+          paddingAll: 'xl', paddingTop: 'lg', paddingBottom: 'none',
           contents: [
-            {
-              type: 'box',
-              layout: 'horizontal',
-              backgroundColor: heroGradBg,
-              cornerRadius: '16px',
-              paddingAll: 'lg',
-              borderWidth: '1px',
-              borderColor: heroBorder,
-              alignItems: 'center',
-              contents: [
+            glassPanel(
+              [
                 {
-                  type: 'box',
-                  layout: 'vertical',
-                  flex: 1,
-                  spacing: 'xs',
+                  type: 'box', layout: 'horizontal', alignItems: 'center',
                   contents: [
-                    txt(hasTasks ? 'งานที่ยังค้างอยู่' : 'วันนี้เสร็จหมดแล้ว', {
-                      size: 'sm', color: p.muted, weight: 'bold',
-                    }),
-                    txt(
-                      hasTasks ? 'ค่อยๆ ทำทีละอย่างนะ ✨' : 'พื้นที่ในหัวโล่งมาก 🌿',
-                      { size: 'xs', color: p.muted, wrap: true },
-                    ),
-                  ],
-                },
-                // Big number
-                {
-                  type: 'box',
-                  layout: 'vertical',
-                  alignItems: 'flex-end',
-                  contents: [
-                    txt(String(taskCount), { size: '5xl', weight: 'bold', color: accentColor }),
-                    txt(hasTasks ? 'รายการ' : '🎉', { size: 'xs', color: p.muted, align: 'end' }),
+                    { type: 'box', layout: 'vertical', flex: 1, spacing: 'xs', contents: [
+                      label(busy ? 'Pending tasks' : 'All clear', busy ? g.rDeep : g.sDeep),
+                      t(busy ? 'อย่าลืมพักด้วยนะ' : 'วันนี้เก่งมาก', { size: 'xs', color: g.sub, margin: 'xs' }),
+                    ]},
+                    t(String(n), { size: '5xl', weight: 'bold', color: numColor }),
                   ],
                 },
               ],
-            },
+              panelBg, panelBdr,
+            ),
           ],
         },
 
-        sep(p.lineLight),
-
-        // ── Motivational row ──
-        {
-          type: 'box',
-          layout: 'horizontal',
-          paddingAll: 'xl',
-          paddingTop: 'lg',
-          paddingBottom: 'lg',
-          alignItems: 'center',
-          spacing: 'sm',
-          contents: [
-            dot(accentColor),
-            txt('พร้อมช่วยจัดการแผนวันนี้เสมอ', { size: 'sm', weight: 'bold', color: p.inkDark }),
-          ],
-        },
+        { type: 'box', layout: 'vertical', height: '16px', contents: [] },
+        hr(),
+        ticker(
+          busy ? 'พร้อมช่วยจัดการแผนวันนี้เสมอ' : 'ถ้ามีงานใหม่บอกได้เลย',
+          panelBg, numColor,
+        ),
       ],
-      footerStrip(
-        ctaBtn('ดูงานทั้งหมด', '/list',   p.peach),
-        ctaBtn('วันสำคัญ',     '/events', p.purple),
+      footerBar(
+        solidBtn(busy ? 'ดูรายการทั้งหมด' : 'เพิ่มงานใหม่', busy ? '/list' : '/todo ', busy ? g.rMid : g.sMid),
+        solidBtn('วันสำคัญ', '/events', g.iMid),
       ),
     ),
   }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  MORNING REMINDER CARD
-// ════════════════════════════════════════════════════════════════════════════
-export function createMorningReminderFlex(tasks: Array<Record<string, unknown>>, date: string): LineFlexMessage {
-  const taskRows: FlexComponent[] = tasks.slice(0, 5).map((task, index) => {
-    const prio  = priorityStyle(Number(task.priority))
-    const title = String(task.title   || 'รายการใหม่')
-    const subj  = task.subject && task.subject !== 'General' ? String(task.subject) : 'ทั่วไป'
+// ═════════════════════════════════════════════════════════════════════════════
+//  MORNING REMINDER
+// ═════════════════════════════════════════════════════════════════════════════
+export function createMorningReminderFlex(
+  tasks: Array<Record<string, unknown>>,
+  date: string,
+): LineFlexMessage {
+
+  const rows: Fc[] = tasks.slice(0, 5).map((task, i) => {
+    const pr    = prioStyle(Number(task.priority))
+    const title = String(task.title  || 'รายการใหม่')
+    const subj  = task.subject && task.subject !== 'General' ? String(task.subject) : 'General'
 
     return {
-      type: 'box',
-      layout: 'horizontal',
-      spacing: 'md',
-      paddingTop: 'md',
-      paddingBottom: 'md',
-      paddingStart: 'xl',
-      paddingEnd: 'xl',
-      backgroundColor: index % 2 === 0 ? p.paperWarm : p.paper,
+      type: 'box', layout: 'horizontal', spacing: 'lg',
+      paddingTop: 'md', paddingBottom: 'md',
+      paddingStart: 'xl', paddingEnd: 'xl',
+      backgroundColor: i % 2 === 0 ? g.warm : g.paper,
       alignItems: 'center',
       contents: [
-        // Numbered circle
-        {
-          type: 'box',
-          layout: 'vertical',
-          width: '24px',
-          height: '24px',
-          cornerRadius: '12px',
-          backgroundColor: p.blueSoft,
-          alignItems: 'center',
-          justifyContent: 'center',
-          contents: [txt(`${index + 1}`, { size: 'xs', weight: 'bold', color: p.blue, align: 'center' })],
-        },
-        // Task info
-        {
-          type: 'box',
-          layout: 'vertical',
-          flex: 1,
-          spacing: 'xs',
-          contents: [
-            txt(title, { size: 'sm', weight: 'bold', wrap: true, maxLines: 2, color: p.inkDark }),
-            txt(`📚 ${subj}`, { size: 'xxs', color: p.muted }),
-          ],
-        },
-        // Priority pill
-        badge(prio.label, prio.color, prio.soft),
+        // Number cell — no emoji, just the number
+        iconCell(`${i + 1}`, '28px', g.kMid, g.kFrost, g.kBorder),
+        // Info
+        { type: 'box', layout: 'vertical', flex: 1, spacing: 'xs', contents: [
+          t(title, { size: 'sm', weight: 'bold', wrap: true, maxLines: 2, color: g.ink }),
+          t(subj,  { size: 'xxs', color: g.ghost }),
+        ]},
+        chip(pr.label, pr.textColor, pr.bg, pr.border),
       ],
     }
   })
 
-  const extraCount = Math.max(0, tasks.length - 5)
+  const extra = Math.max(0, tasks.length - 5)
 
-  const body: FlexComponent[] = [
-    // ── Header band ──
-    ...headerBand('GOOD MORNING ☀️', 'แผนเล็กๆ ของวันนี้', p.yellow, p.yellowSoft),
+  const body: Fc[] = [
+    glassHero(
+      g.aDeep, g.aMid, '150deg',
+      'Study Manager.koko · Morning',
+      'แผนวันนี้',
+      `${date} · ${tasks.length} รายการรออยู่`,
+    ),
 
-    // Date + count pill row
+    // Count row
     {
-      type: 'box',
-      layout: 'horizontal',
-      paddingStart: 'xl',
-      paddingEnd: 'xl',
-      paddingBottom: 'md',
+      type: 'box', layout: 'horizontal',
+      paddingStart: 'xl', paddingEnd: 'xl',
+      paddingTop: 'lg', paddingBottom: 'md',
       alignItems: 'center',
-      spacing: 'sm',
       contents: [
-        txt(`📅 ${date}`, { size: 'xs', color: p.muted, flex: 1 }),
-        badge(`${tasks.length} งาน`, p.yellow, p.yellowSoft),
+        t('รายการวันนี้', { size: 'xs', weight: 'bold', color: g.sub, flex: 1 }),
+        chip(`${tasks.length} Tasks`, g.aDeep, g.aFrost, g.aBorder),
       ],
     },
 
-    sep(p.lineLight),
+    hr(),
 
-    // Column header
-    {
-      type: 'box',
-      layout: 'horizontal',
-      paddingStart: 'xl',
-      paddingEnd: 'xl',
-      paddingTop: 'md',
-      paddingBottom: 'xs',
-      contents: [
-        txt('รายการวันนี้', { size: 'xs', weight: 'bold', color: p.muted }),
-      ],
-    },
-
-    // Task rows
-    { type: 'box', layout: 'vertical', spacing: 'none', contents: taskRows },
+    { type: 'box', layout: 'vertical', spacing: 'none', contents: rows },
   ]
 
-  if (extraCount > 0) {
+  if (extra > 0) {
     body.push({
-      type: 'box',
-      layout: 'horizontal',
-      paddingAll: 'lg',
-      paddingTop: 'sm',
-      alignItems: 'center',
-      spacing: 'sm',
+      type: 'box', layout: 'horizontal',
+      paddingAll: 'lg', alignItems: 'center',
       contents: [
-        dot(p.muted),
-        txt(`และอีก ${extraCount} งาน — ดูทั้งหมดได้ในรายการ`, { size: 'xs', color: p.muted }),
+        { type: 'box', layout: 'vertical', width: '2px', height: '14px', backgroundColor: g.ghost, cornerRadius: '2px', contents: [] },
+        t(`+${extra} รายการ`, { size: 'xs', color: g.ghost, margin: 'md' }),
       ],
     })
   }
 
-  // Motivational footer bar
-  body.push(sep(p.lineLight))
-  body.push({
-    type: 'box',
-    layout: 'horizontal',
-    paddingAll: 'xl',
-    paddingTop: 'md',
-    paddingBottom: 'md',
-    backgroundColor: p.yellowSoft,
-    alignItems: 'center',
-    spacing: 'sm',
-    contents: [
-      txt('✨', { size: 'sm' }),
-      txt('เริ่มจากงานเล็กที่สุดก่อนก็ได้ คุณทำได้แน่นอน!', {
-        size: 'xs', color: p.yellow, weight: 'bold', wrap: true, flex: 1,
-      }),
-    ],
-  })
+  body.push(hr())
+  body.push(ticker('เริ่มจากงานเล็กที่สุดก่อนก็ได้', g.aFrost, g.aMid))
 
   return {
     type: 'flex',
-    altText: `อรุณสวัสดิ์ วันนี้มีงาน ${tasks.length} รายการ`,
-    contents: bubble(
+    altText: `Good Morning · วันนี้มีงาน ${tasks.length} รายการ`,
+    contents: shell(
       body,
-      footerStrip(
-        ctaBtn('ดูงานทั้งหมด', '/list',   p.peach),
-        ctaBtn('เช็กสถานะ',   '/status', p.green),
+      footerBar(
+        solidBtn('ดูรายการ', '/list',   g.rMid),
+        solidBtn('สถานะ',    '/status', g.sMid),
       ),
     ),
   }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
 //  TASK LIST CAROUSEL
-// ════════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
 export function createTasksFlex(tasks: Array<Record<string, unknown>>): LineFlexMessage {
   if (tasks.length === 0) {
     return {
       type: 'flex',
-      altText: 'คุณไม่มีงานที่ค้างอยู่ในตอนนี้',
-      contents: bubble(
+      altText: 'ไม่มีงานค้างแล้ว',
+      contents: shell(
         [
-          ...headerBand('TO-DO', 'ไม่มีงานค้างแล้ว 🎉', p.green, p.greenSoft),
+          glassHero(g.sDeep, g.sMid, '140deg', 'Study Manager.koko · To-Do', 'ไม่มีงานค้างแล้ว', 'พักหายใจได้เลย'),
           {
-            type: 'box',
-            layout: 'vertical',
-            paddingAll: 'xl',
-            paddingTop: 'lg',
+            type: 'box', layout: 'vertical', paddingAll: 'xl', paddingTop: 'lg',
             contents: [
-              {
-                type: 'box',
-                layout: 'horizontal',
-                backgroundColor: p.greenSoft,
-                cornerRadius: '14px',
-                paddingAll: 'lg',
-                borderWidth: '1px',
-                borderColor: p.greenDeep,
-                alignItems: 'center',
-                spacing: 'md',
-                contents: [
-                  txt('🌿', { size: 'xxl' }),
-                  {
-                    type: 'box',
-                    layout: 'vertical',
-                    spacing: 'xs',
-                    contents: [
-                      txt('สะอาด!', { size: 'lg', weight: 'bold', color: p.green }),
-                      txt('พักหายใจได้เลย หรือเพิ่มงานใหม่เมื่อพร้อมนะ', {
-                        size: 'xs', color: p.muted, wrap: true,
-                      }),
-                    ],
-                  },
-                ],
-              },
+              glassPanel([
+                t('สะอาด', { size: 'xl', weight: 'bold', color: g.sMid }),
+                t('พักหายใจได้เลย หรือเพิ่มงานใหม่เมื่อพร้อม', { size: 'xs', color: g.sub, wrap: true, margin: 'sm' }),
+              ], g.sFrost, g.sBorder),
             ],
           },
         ],
-        footerStrip(ctaBtn('เพิ่ม To-Do', '/todo ', p.green)),
+        footerBar(solidBtn('เพิ่มงานใหม่', '/todo ', g.sMid)),
       ),
     }
   }
 
   const cards = tasks.slice(0, 10).map((task) => {
-    const prio    = priorityStyle(Number(task.priority))
-    const title   = String(task.title   || 'รายการใหม่')
-    const subj    = task.subject && task.subject !== 'General' ? String(task.subject) : 'ทั่วไป'
-    const dueDate = task.due_date ? String(task.due_date) : 'ยังไม่กำหนด'
+    const pr    = prioStyle(Number(task.priority))
+    const title = String(task.title  || 'รายการใหม่')
+    const subj  = task.subject && task.subject !== 'General' ? String(task.subject) : 'General'
+    const due   = task.due_date ? String(task.due_date) : 'No deadline'
 
-    return bubble(
+    return shell(
       [
-        ...headerBand('TO-DO', title, p.peach, p.peachSoft),
+        glassHero(g.rDeep, g.rMid, '145deg', 'Study Manager.koko · To-Do', title, subj, '110px'),
 
-        // Subject + priority row
         {
-          type: 'box',
-          layout: 'horizontal',
-          paddingStart: 'xl',
-          paddingEnd: 'xl',
-          paddingBottom: 'lg',
-          alignItems: 'center',
-          spacing: 'sm',
+          type: 'box', layout: 'vertical',
+          paddingAll: 'xl', paddingTop: 'lg', paddingBottom: 'none', spacing: 'md',
           contents: [
-            txt(`📚 ${subj}`, { size: 'xs', color: p.muted, flex: 1 }),
-            badge(prio.label, prio.color, prio.soft),
-          ],
-        },
-
-        sep(p.lineLight),
-
-        // Due date card
-        {
-          type: 'box',
-          layout: 'vertical',
-          paddingAll: 'xl',
-          paddingTop: 'lg',
-          paddingBottom: 'lg',
-          contents: [
+            // Priority row
             {
-              type: 'box',
-              layout: 'horizontal',
-              backgroundColor: p.cream,
-              cornerRadius: '12px',
-              paddingAll: 'md',
-              borderWidth: '1px',
-              borderColor: p.lineLight,
-              alignItems: 'center',
-              spacing: 'md',
+              type: 'box', layout: 'horizontal', alignItems: 'center', spacing: 'sm',
               contents: [
+                label('Priority', g.ghost),
+                { type: 'box', layout: 'vertical', flex: 1, contents: [] },
+                chip(pr.label, pr.textColor, pr.bg, pr.border),
+              ],
+            },
+            // Due date panel — glass look
+            glassPanel(
+              [
                 {
-                  type: 'box',
-                  layout: 'vertical',
-                  width: '38px',
-                  height: '38px',
-                  cornerRadius: '10px',
-                  backgroundColor: p.yellowSoft,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  contents: [txt('📅', { size: 'md', align: 'center' })],
-                },
-                {
-                  type: 'box',
-                  layout: 'vertical',
-                  spacing: 'xs',
+                  type: 'box', layout: 'horizontal', alignItems: 'center',
                   contents: [
-                    txt('กำหนดส่ง', { size: 'xxs', color: p.muted }),
-                    txt(dueDate, { size: 'sm', weight: 'bold', color: p.inkDark }),
+                    { type: 'box', layout: 'vertical', spacing: 'xs', flex: 1, contents: [
+                      label('Due Date', g.ghost),
+                      t(due, { size: 'md', weight: 'bold', color: g.ink, margin: 'xs' }),
+                    ]},
+                    // Right accent bar — no emoji, just a thin vertical line
+                    { type: 'box', layout: 'vertical',
+                      width: '3px', height: '36px',
+                      backgroundColor: g.rBorder,
+                      cornerRadius: '3px',
+                      contents: [],
+                    },
                   ],
                 },
               ],
-            },
+              g.rFrost, g.rBorder,
+            ),
           ],
         },
+
+        { type: 'box', layout: 'vertical', height: '16px', contents: [] },
+        hr(),
+        ticker('กดปุ่มด้านล่างเมื่อทำเสร็จแล้ว', g.rFrost, g.rMid),
       ],
-      footerStrip(
-        ctaBtn('✅ เสร็จแล้ว', `/done ${title}`, p.green),
+      footerBar(
+        solidBtn('Mark as Done', `/done ${title}`, g.sMid),
         ghostBtn('ดูทั้งหมด', '/list'),
       ),
     )
@@ -557,146 +475,96 @@ export function createTasksFlex(tasks: Array<Record<string, unknown>>): LineFlex
 
   return {
     type: 'flex',
-    altText: `รายการ To-Do ของคุณ ${tasks.length} รายการ`,
+    altText: `To-Do · ${tasks.length} รายการ`,
     contents: { type: 'carousel', contents: cards },
   }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
 //  EVENTS CAROUSEL
-// ════════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
 export function createEventsFlex(events: Array<Record<string, unknown>>): LineFlexMessage {
   if (events.length === 0) {
     return {
       type: 'flex',
-      altText: 'ยังไม่มีวันสำคัญที่กำลังจะมาถึง',
-      contents: bubble(
+      altText: 'ยังไม่มีวันสำคัญ',
+      contents: shell(
         [
-          ...headerBand('CALENDAR', 'ยังไม่มีวันสำคัญ', p.purple, p.purpleSoft),
+          glassHero(g.iDeep, g.iMid, '145deg', 'Study Manager.koko · Calendar', 'ยังไม่มีวันสำคัญ', 'เพิ่มสอบ แข่งขัน หรือ Deadline'),
           {
-            type: 'box',
-            layout: 'vertical',
-            paddingAll: 'xl',
-            paddingTop: 'lg',
+            type: 'box', layout: 'vertical', paddingAll: 'xl', paddingTop: 'lg',
             contents: [
-              {
-                type: 'box',
-                layout: 'horizontal',
-                backgroundColor: p.purpleSoft,
-                cornerRadius: '14px',
-                paddingAll: 'lg',
-                borderWidth: '1px',
-                borderColor: p.purpleDeep,
-                alignItems: 'center',
-                spacing: 'md',
-                contents: [
-                  txt('🗓️', { size: 'xxl' }),
-                  {
-                    type: 'box',
-                    layout: 'vertical',
-                    spacing: 'xs',
-                    contents: [
-                      txt('ปฏิทินว่างอยู่', { size: 'lg', weight: 'bold', color: p.purple }),
-                      txt('เพิ่มสอบ แข่งขัน หรือเดดไลน์สำคัญไว้ได้เลย', {
-                        size: 'xs', color: p.muted, wrap: true,
-                      }),
-                    ],
-                  },
-                ],
-              },
+              glassPanel([
+                t('ปฏิทินว่างอยู่', { size: 'xl', weight: 'bold', color: g.iMid }),
+                t('เพิ่มนัดหมายสำคัญได้เลย', { size: 'xs', color: g.sub, wrap: true, margin: 'sm' }),
+              ], g.iFrost, g.iBorder),
             ],
           },
         ],
-        footerStrip(ctaBtn('เพิ่มวันสำคัญ', '/event ', p.purple)),
+        footerBar(solidBtn('เพิ่มวันสำคัญ', '/event ', g.iMid)),
       ),
     }
   }
 
   const cards = events.slice(0, 10).map((event) => {
-    const style = eventStyle(String(event.type || 'important'))
+    const ev    = evStyle(String(event.type || 'important'))
     const title = String(event.title      || 'วันสำคัญ')
-    const date  = String(event.event_date || 'ยังไม่กำหนด')
+    const date  = String(event.event_date || 'TBD')
 
-    return bubble(
+    return shell(
       [
-        ...headerBand('CALENDAR', title, p.purple, p.purpleSoft),
+        glassHero(g.iDeep, g.iMid, '145deg', 'Study Manager.koko · Calendar', title, date, '120px'),
 
-        // Event type badge
         {
-          type: 'box',
-          layout: 'horizontal',
-          paddingStart: 'xl',
-          paddingEnd: 'xl',
-          paddingBottom: 'lg',
-          contents: [badge(style.label, style.color, style.soft)],
-        },
-
-        sep(p.lineLight),
-
-        // Date hero card
-        {
-          type: 'box',
-          layout: 'vertical',
-          paddingAll: 'xl',
-          paddingTop: 'lg',
-          paddingBottom: 'lg',
-          spacing: 'md',
+          type: 'box', layout: 'vertical',
+          paddingAll: 'xl', paddingTop: 'lg', paddingBottom: 'none', spacing: 'md',
           contents: [
+            // Type chip row
             {
-              type: 'box',
-              layout: 'horizontal',
-              backgroundColor: style.soft,
-              cornerRadius: '16px',
-              paddingAll: 'lg',
-              borderWidth: '1px',
-              borderColor: `${style.color}44`,
-              alignItems: 'center',
-              spacing: 'lg',
+              type: 'box', layout: 'horizontal', alignItems: 'center',
               contents: [
-                // Icon block
-                {
-                  type: 'box',
-                  layout: 'vertical',
-                  width: '52px',
-                  height: '52px',
-                  cornerRadius: '14px',
-                  backgroundColor: p.paper,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  contents: [txt('📅', { size: 'xl', align: 'center' })],
-                },
-                // Date + label
-                {
-                  type: 'box',
-                  layout: 'vertical',
-                  spacing: 'xs',
-                  contents: [
-                    txt(date,       { size: 'lg',  weight: 'bold', color: style.color }),
-                    txt(style.label, { size: 'xxs', color: p.muted }),
-                  ],
-                },
+                label('Type', g.ghost),
+                { type: 'box', layout: 'vertical', flex: 1, contents: [] },
+                chip(ev.label, ev.textColor, ev.bg, ev.border),
               ],
             },
-            // Optional notes
-            ...(event.notes
-              ? [{
-                  type: 'box',
-                  layout: 'horizontal',
-                  backgroundColor: p.cream,
-                  cornerRadius: '10px',
-                  paddingAll: 'md',
-                  spacing: 'sm',
+            // Date panel — glass
+            glassPanel(
+              [
+                {
+                  type: 'box', layout: 'horizontal', alignItems: 'center',
                   contents: [
-                    txt('📝', { size: 'xs' }),
-                    txt(String(event.notes), { size: 'xs', color: p.muted, wrap: true, flex: 1 }),
+                    { type: 'box', layout: 'vertical', flex: 1, spacing: 'xs', contents: [
+                      label('Date', g.ghost),
+                      t(date, { size: 'lg', weight: 'bold', color: g.ink, margin: 'xs' }),
+                    ]},
+                    { type: 'box', layout: 'vertical',
+                      width: '3px', height: '36px',
+                      backgroundColor: g.iBorder,
+                      cornerRadius: '3px',
+                      contents: [],
+                    },
                   ],
-                }]
-              : []),
+                },
+                ...(event.notes ? [
+                  hr(g.iBorder),
+                  { type: 'box', layout: 'vertical', paddingTop: 'md', contents: [
+                    label('Notes', g.ghost),
+                    t(String(event.notes), { size: 'xs', color: g.sub, wrap: true, margin: 'xs' }),
+                  ]},
+                ] : []),
+              ],
+              g.iFrost, g.iBorder,
+            ),
           ],
         },
+
+        { type: 'box', layout: 'vertical', height: '16px', contents: [] },
+        hr(),
+        ticker('เตรียมตัวให้พร้อม เวลาผ่านเร็วกว่าที่คิด', g.iFrost, g.iMid),
       ],
-      footerStrip(
-        ctaBtn('ดูวันอื่นๆ',     '/events', p.purple),
+      footerBar(
+        solidBtn('ดูทั้งหมด',      '/events', g.iMid),
         ghostBtn('เพิ่มวันสำคัญ', '/event '),
       ),
     )
@@ -704,7 +572,7 @@ export function createEventsFlex(events: Array<Record<string, unknown>>): LineFl
 
   return {
     type: 'flex',
-    altText: `วันสำคัญและนัดหมาย ${events.length} รายการ`,
+    altText: `Calendar · ${events.length} รายการ`,
     contents: { type: 'carousel', contents: cards },
   }
 }
