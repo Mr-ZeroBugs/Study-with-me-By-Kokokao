@@ -1637,3 +1637,14 @@ html[data-theme="dark-glass"] .goal-detail-delete:hover { background: rgba(255, 
   .goal-pot-slot { min-height: 190px; }.goal-pot-display { width: 140px; height: 150px; }.goal-pot-stage { font-size: 78px; }.goal-pot-vessel { bottom: 16px; width: 55px; height: 28px; }.goal-pot-tooltip { bottom: 28px; }
   .goal-detail-card { border-radius: 20px; padding: 20px 17px; }.goal-detail-header { align-items: flex-start; gap: 10px; padding-right: 28px; }.goal-detail-plant { width: 70px; height: 77px; border-radius: 16px; }.goal-detail-plant .goal-pot-stage { font-size: 49px; }.goal-detail-plant .goal-pot-vessel { bottom: 7px; width: 36px; height: 19px; }.goal-detail-title h2 { font-size: 24px; }.goal-detail-description { margin-top: 14px; font-size: 11px; }.goal-detail-stat-grid { gap: 5px; }.goal-detail-stat-grid > div { padding: 8px 7px; }.goal-detail-stat-grid strong { font-size: 12px; }.goal-detail-columns { grid-template-columns: 1fr; }
 }
+
+/* Actions inside the detail modal should read as actions, not metadata. */
+.goal-playlist-edit { border: 1px solid #9ac4aa !important; border-radius: 8px !important; padding: 5px 8px !important; background: #edf8f0 !important; color: #3d7658 !important; font-size: 8px !important; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; }
+.goal-playlist-edit:hover { border-color: #6da984 !important; background: #dff2e5 !important; color: #2f6848 !important; }
+.goal-step-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.goal-step-row .goal-garden-step { min-width: 0; flex: 1; }
+.goal-step-delete { display: grid; width: 23px; height: 23px; flex: none; place-items: center; border: 1px solid transparent; border-radius: 7px; padding: 0; background: transparent; color: #c3aaa4; opacity: .72; transition: color .18s, background .18s, border-color .18s, opacity .18s; }
+.goal-step-row:hover .goal-step-delete, .goal-step-delete:focus-visible { border-color: #eccfc8; background: #fff0e8; color: #b45f69; opacity: 1; }
+html[data-theme="dark-glass"] .goal-playlist-edit { border-color: rgba(134, 239, 172, .5) !important; background: rgba(134, 239, 172, .13) !important; color: #bbf7d0 !important; }
+html[data-theme="dark-glass"] .goal-playlist-edit:hover { border-color: rgba(134, 239, 172, .72) !important; background: rgba(134, 239, 172, .2) !important; }
+html[data-theme="dark-glass"] .goal-step-row:hover .goal-step-delete, html[data-theme="dark-glass"] .goal-step-delete:focus-visible { border-color: rgba(255, 124, 124, .3); background: rgba(255, 124, 124, .1); color: #fda4af; }

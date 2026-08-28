@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { CalendarDays, Check, ChevronDown, Droplets, Plus, Sprout, Trash2, X } from 'lucide-react'
+import { CalendarDays, Check, Droplets, Plus, Sprout, Trash2, X } from 'lucide-react'
 import type { User } from '@supabase/supabase-js'
 import { getLocalDateKey, loadSubjectLogs, type SubjectDayLogs } from '../lib/storage'
 import {
@@ -207,6 +207,11 @@ export function GoalsGarden({ user, subjects }: { user: User | null; subjects: s
     persist({ ...data, steps: data.steps.map((step) => step.id === id ? { ...step, completed: !step.completed } : step) })
   }
 
+  const deleteStep = (id: string) => {
+    persist({ ...data, steps: data.steps.filter((step) => step.id !== id) })
+    void removePlannerRecord(user, 'goal_steps', id)
+  }
+
   const addStep = (goalId: string) => {
     const title = stepDrafts[goalId]?.trim()
     if (!title) return
@@ -313,12 +318,12 @@ export function GoalsGarden({ user, subjects }: { user: User | null; subjects: s
           </div>
 
           <div className="goal-detail-columns">
-            <section className="goal-detail-section"><div className="goal-detail-section-heading"><span>focus playlist</span><button type="button" onClick={() => setExpandedGoal(expandedGoal === selectedGoal.id ? null : selectedGoal.id)} aria-expanded={expandedGoal === selectedGoal.id}>{expandedGoal === selectedGoal.id ? 'done' : 'edit'} <ChevronDown className={`size-3 ${expandedGoal === selectedGoal.id ? 'rotate-180' : ''}`} /></button></div><div className="goal-subject-chips">{selectedGoal.subjects?.length ? selectedGoal.subjects.map((subject) => <span key={subject}>{subject}</span>) : <span className="goal-no-subject">choose subjects to water</span>}</div>{expandedGoal === selectedGoal.id && <div className="goal-subject-picker">{availableSubjects.map((subject) => <button type="button" key={subject} className={selectedGoal.subjects?.includes(subject) ? 'selected' : ''} aria-pressed={selectedGoal.subjects?.includes(subject) ?? false} onClick={() => toggleGoalSubject(selectedGoal.id, subject)}>{selectedGoal.subjects?.includes(subject) && <Check className="size-3" />}{subject}</button>)}</div>}</section>
+            <section className="goal-detail-section"><div className="goal-detail-section-heading"><span>focus playlist</span><button type="button" className="goal-playlist-edit" onClick={() => setExpandedGoal(expandedGoal === selectedGoal.id ? null : selectedGoal.id)} aria-expanded={expandedGoal === selectedGoal.id}>{expandedGoal === selectedGoal.id ? <><Check className="size-3" /> done</> : <><Plus className="size-3" /> edit subjects</>}</button></div><div className="goal-subject-chips">{selectedGoal.subjects?.length ? selectedGoal.subjects.map((subject) => <span key={subject}>{subject}</span>) : <span className="goal-no-subject">choose subjects to water</span>}</div>{expandedGoal === selectedGoal.id && <div className="goal-subject-picker">{availableSubjects.map((subject) => <button type="button" key={subject} className={selectedGoal.subjects?.includes(subject) ? 'selected' : ''} aria-pressed={selectedGoal.subjects?.includes(subject) ?? false} onClick={() => toggleGoalSubject(selectedGoal.id, subject)}>{selectedGoal.subjects?.includes(subject) && <Check className="size-3" />}{subject}</button>)}</div>}</section>
             <section className="goal-detail-section"><div className="goal-detail-section-heading"><span>growth progress</span><strong>{selectedGoalStats.percent}%</strong></div><div className="goal-progress-track"><span style={{ width: `${selectedGoalStats.percent}%` }} /></div><p className="goal-detail-muted"><Droplets className="size-3.5" /> {selectedGoalStats.complete}/{selectedGoalStats.steps.length} milestones complete</p></section>
           </div>
 
           <div className="goal-detail-actions"><Link href="/focus" className="goal-water-link"><Droplets className="size-3.5" /> water in focus</Link><button type="button" className="goal-detail-delete" onClick={() => deleteGoal(selectedGoal.id)}><Trash2 className="size-3.5" /> delete goal</button></div>
-          <section className="goal-detail-milestones"><div className="goal-detail-section-heading"><span>milestones</span><small>tap to complete</small></div><div className="goal-step-list">{selectedGoalStats.steps.length ? selectedGoalStats.steps.map((step) => <button type="button" className={`goal-garden-step ${step.completed ? 'done' : ''}`} key={step.id} onClick={() => toggleStep(step.id)}>{step.completed ? <Check className="size-3.5" /> : <span className="goal-step-dot" />}{step.title}</button>) : <p className="goal-detail-muted">Add a small next step to give this goal roots.</p>}</div><div className="goal-step-adder"><input aria-label={`New milestone for ${selectedGoal.title}`} value={stepDrafts[selectedGoal.id] ?? ''} placeholder="add a milestone" onChange={(event) => setStepDrafts((current) => ({ ...current, [selectedGoal.id]: event.target.value }))} onKeyDown={(event) => { if (event.key === 'Enter') addStep(selectedGoal.id) }} /><button type="button" onClick={() => addStep(selectedGoal.id)}>add</button></div></section>
+          <section className="goal-detail-milestones"><div className="goal-detail-section-heading"><span>milestones</span><small>tap to complete</small></div><div className="goal-step-list">{selectedGoalStats.steps.length ? selectedGoalStats.steps.map((step) => <div className="goal-step-row" key={step.id}><button type="button" className={`goal-garden-step ${step.completed ? 'done' : ''}`} onClick={() => toggleStep(step.id)}>{step.completed ? <Check className="size-3.5" /> : <span className="goal-step-dot" />}{step.title}</button><button type="button" className="goal-step-delete" aria-label={`Delete milestone ${step.title}`} onClick={() => deleteStep(step.id)}><Trash2 className="size-3" /></button></div>) : <p className="goal-detail-muted">Add a small next step to give this goal roots.</p>}</div><div className="goal-step-adder"><input aria-label={`New milestone for ${selectedGoal.title}`} value={stepDrafts[selectedGoal.id] ?? ''} placeholder="add a milestone" onChange={(event) => setStepDrafts((current) => ({ ...current, [selectedGoal.id]: event.target.value }))} onKeyDown={(event) => { if (event.key === 'Enter') addStep(selectedGoal.id) }} /><button type="button" onClick={() => addStep(selectedGoal.id)}>add</button></div></section>
         </div>
       </div>}
     </>
