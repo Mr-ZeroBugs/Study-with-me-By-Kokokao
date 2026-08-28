@@ -1161,3 +1161,153 @@ html[data-theme="dark-glass"] .dashboard-line-link {
 html[data-theme="dark-glass"] .dashboard-line-link svg {
   color: #86efac;
 }
+
+/*
+   Neutral liquid-glass finish for the two universal themes.
+   Cozy Paper keeps its illustrated palette; Light and Dark stay deliberately
+   quiet so a future user background can become the visual identity.
+*/
+html[data-theme="light"] {
+  --background: #e9eef4;
+  --foreground: #172033;
+  --card: rgba(255, 255, 255, .58);
+  --card-foreground: #172033;
+  --muted-ink: #667085;
+  --ink: #172033;
+  --line: rgba(70, 88, 112, .16);
+}
+html[data-theme="light"] body {
+  background-color: #e9eef4 !important;
+  background-image: linear-gradient(145deg, #f7f9fc 0%, #e3eaf2 100%) !important;
+}
+html[data-theme="light"] :is(
+  .paper-card, .notebook-paper, .tasks-paper, .priorities-paper,
+  .remember-paper, .dates-paper, .study-goals-paper, .notes-paper,
+  .planner-card, .planner-intro, .timer-card, .mini-card, .calendar-card,
+  .tips-card, .subject-analytics, .stats-range-card, .stats-timeline-card,
+  .stats-calendar-card, .stats-kpi, .today-card, .focus-mix-card,
+  .dashboard-tasks-card, .dashboard-goal-card, .dashboard-events-card,
+  .dashboard-next-board, .dashboard-month-board, .weekly-chart,
+  .goal-box, .study-mood, .mini-insights, .dont-forget, .selected-date-details
+) {
+  background: rgba(255, 255, 255, .58) !important;
+  backdrop-filter: blur(28px) saturate(135%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(135%) !important;
+  border: 1px solid rgba(255, 255, 255, .82) !important;
+  box-shadow: 0 12px 34px rgba(45, 61, 80, .10), inset 0 1px 0 rgba(255, 255, 255, .92) !important;
+}
+html[data-theme="light"] .dashboard-hero,
+html[data-theme="light"] .dashboard-hero:before,
+html[data-theme="light"] .dashboard-hero:after,
+html[data-theme="light"] .timer-card:after,
+html[data-theme="light"] .tape {
+  background-image: none !important;
+}
+html[data-theme="light"] .dashboard-hero:before,
+html[data-theme="light"] .dashboard-hero:after,
+html[data-theme="light"] .timer-card:after,
+html[data-theme="light"] .tape,
+html[data-theme="light"] .notebook-sticky,
+html[data-theme="light"] .notebook-sprig,
+html[data-theme="light"] .timer-sparkle,
+html[data-theme="light"] .timer-underline,
+html[data-theme="light"] .notebook-paper:before,
+html[data-theme="light"] .notebook-paper:after {
+  display: none !important;
+}
+html[data-theme="light"] .dashboard-date-card {
+  background: rgba(255, 255, 255, .48) !important;
+  color: #172033 !important;
+  border: 1px solid rgba(255, 255, 255, .84) !important;
+  box-shadow: 0 12px 30px rgba(45, 61, 80, .13), inset 0 1px 0 rgba(255, 255, 255, .92) !important;
+}
+html[data-theme="light"] .bottom-nav-inner,
+html[data-theme="light"] .settings-float-btn,
+html[data-theme="light"] .settings-modal-box {
+  background: rgba(255, 255, 255, .66) !important;
+  backdrop-filter: blur(30px) saturate(135%) !important;
+  -webkit-backdrop-filter: blur(30px) saturate(135%) !important;
+  border-color: rgba(255, 255, 255, .84) !important;
+  box-shadow: 0 16px 38px rgba(45, 61, 80, .14), inset 0 1px 0 rgba(255, 255, 255, .94) !important;
+}
+html[data-theme="light"] .bottom-nav a.active {
+  background: rgba(23, 32, 51, .10) !important;
+  color: #172033 !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .72) !important;
+}
+html[data-theme="light"] .main-button {
+  background: #172033 !important;
+  border-color: #172033 !important;
+  box-shadow: 0 3px 0 rgba(23, 32, 51, .22) !important;
+}
+html[data-theme="light"] .mode-button.active {
+  background: rgba(23, 32, 51, .09) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .74) !important;
+}
+
+html[data-theme="dark-glass"] {
+  --background: #0b1018;
+  --foreground: #f3f6fb;
+  --card: rgba(255, 255, 255, .065);
+  --card-foreground: #f3f6fb;
+  --muted-ink: #9aa7b8;
+  --ink: #f3f6fb;
+  --line: rgba(255, 255, 255, .13);
+}
+html[data-theme="dark-glass"] body {
+  background-color: #0b1018 !important;
+  background-image: linear-gradient(145deg, #0a0f17 0%, #141d29 100%) !important;
+}
+html[data-theme="dark-glass"] :is(
+  .paper-card, .notebook-paper, .tasks-paper, .priorities-paper,
+  .remember-paper, .dates-paper, .study-goals-paper, .notes-paper,
+  .planner-card, .planner-intro, .timer-card, .mini-card, .calendar-card,
+  .tips-card, .subject-analytics, .stats-range-card, .stats-timeline-card,
+  .stats-calendar-card, .stats-kpi, .today-card, .focus-mix-card,
+  .dashboard-tasks-card, .dashboard-goal-card, .dashboard-events-card,
+  .dashboard-next-board, .dashboard-month-board, .weekly-chart,
+  .goal-box, .study-mood, .mini-insights, .dont-forget, .selected-date-details
+) {
+  background: rgba(255, 255, 255, .065) !important;
+  backdrop-filter: blur(30px) saturate(135%) !important;
+  -webkit-backdrop-filter: blur(30px) saturate(135%) !important;
+  border: 1px solid rgba(255, 255, 255, .12) !important;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .30), inset 0 1px 0 rgba(255, 255, 255, .08) !important;
+  color: #f3f6fb !important;
+}
+html[data-theme="dark-glass"] .dashboard-hero:before,
+html[data-theme="dark-glass"] .dashboard-hero:after,
+html[data-theme="dark-glass"] .timer-card:after,
+html[data-theme="dark-glass"] .tape,
+html[data-theme="dark-glass"] .notebook-sticky,
+html[data-theme="dark-glass"] .notebook-sprig,
+html[data-theme="dark-glass"] .timer-sparkle,
+html[data-theme="dark-glass"] .timer-underline,
+html[data-theme="dark-glass"] .notebook-paper:before,
+html[data-theme="dark-glass"] .notebook-paper:after {
+  display: none !important;
+}
+html[data-theme="dark-glass"] .dashboard-date-card {
+  background: rgba(255, 255, 255, .09) !important;
+  border: 1px solid rgba(255, 255, 255, .16) !important;
+  box-shadow: 0 16px 34px rgba(0, 0, 0, .28), inset 0 1px 0 rgba(255, 255, 255, .12) !important;
+}
+html[data-theme="dark-glass"] .bottom-nav-inner,
+html[data-theme="dark-glass"] .settings-float-btn,
+html[data-theme="dark-glass"] .settings-modal-box {
+  background: rgba(255, 255, 255, .075) !important;
+  backdrop-filter: blur(34px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(34px) saturate(140%) !important;
+  border-color: rgba(255, 255, 255, .14) !important;
+  box-shadow: 0 22px 52px rgba(0, 0, 0, .38), inset 0 1px 0 rgba(255, 255, 255, .10) !important;
+}
+html[data-theme="dark-glass"] .main-button {
+  background: #f3f6fb !important;
+  border-color: #f3f6fb !important;
+  color: #0b1018 !important;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, .30) !important;
+}
+html[data-theme="dark-glass"] .mode-button.active {
+  background: rgba(255, 255, 255, .12) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .10) !important;
+}
