@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { verifyLineSignature, sendLineReply, parseTaskInput, parseEventInput } from '@/lib/line'
-import { createEventsFlex, createStatusFlex, createTasksFlex } from '@/lib/line-flex'
+import { createEventsFlex, createStatusFlex, createTaskDoneFlex, createTasksFlex } from '@/lib/line-flex'
 import { analyzeUserMessageWithGemini } from '@/lib/gemini'
 import { getSupabaseAdmin } from '@/lib/supabase-admin'
 import crypto from 'crypto'
@@ -35,6 +35,45 @@ export async function POST(request: Request) {
             text: `👋 ยินดีต้อนรับสู่ Study Manager.koko!\n\nในการเริ่มใช้งานและรับแจ้งเตือน To-Do:\n1. เข้าสู่ระบบบนเว็บ StudyTimer ของคุณ\n2. ไปที่หน้า Tasks / Planner แล้วกด "📱 เชื่อมต่อ LINE"\n3. นำรหัสที่ได้ (เช่น LINK-1234) มาพิมพ์ส่งให้บอทที่นี่ได้เลยครับ ✨`,
           },
         ])
+        continue
+      }
+
+      // Handle one-tap actions coming back from a Flex card.
+      if (event.type === 'postback' && event.postback?.data) {
+        const { data: userConn } = await admin
+          .from('user_line_connections')
+          .select('user_id')
+          .eq('line_user_id', lineUserId)
+          .maybeSingle()
+
+        if (!userConn) {
+          await sendLineReply(replyToken, [{ type: 'text', text: '⚠️ บัญชี LINE นี้ยังไม่ได้เชื่อมต่อกับระบบครับ' }])
+          continue
+        }
+
+        const params = new URLSearchParams(event.postback.data)
+        if (params.get('action') === 'complete_task') {
+          const taskId = params.get('taskId')
+          if (!taskId) {
+            await sendLineReply(replyToken, [{ type: 'text', text: 'ยังระบุงานที่ต้องทำไม่สำเร็จครับ ลองเปิด /list ใหม่อีกครั้งนะ' }])
+            continue
+          }
+
+          const { data: completedTask, error: completeError } = await admin
+            .from('planner_tasks')
+            .update({ completed: true })
+            .eq('id', taskId)
+            .eq('user_id', userConn.user_id)
+            .eq('completed', false)
+            .select('title')
+            .maybeSingle()
+
+          if (completedTask && !completeError) {
+            await sendLineReply(replyToken, [createTaskDoneFlex(completedTask.title)])
+          } else {
+            await sendLineReply(replyToken, [{ type: 'text', text: 'งานนี้อาจถูกทำเสร็จไปแล้ว หรือหาไม่พบครับ ลองกด /list เพื่อรีเฟรชรายการนะ' }])
+          }
+        }
         continue
       }
 
@@ -167,6 +206,32 @@ export async function POST(request: Request) {
             .eq('completed', false)
 
           await sendLineReply(replyToken, [createStatusFlex(count)])
+          continue
+        }
+
+        // 5b. Deterministic completion command for Flex buttons and power users.
+        const doneCommand = text.match(/^\/done\s+(.+)$/i)
+        if (doneCommand) {
+          const taskQuery = doneCommand[1].trim()
+          const { data: matchedTask } = await admin
+            .from('planner_tasks')
+            .select('id, title')
+            .eq('user_id', userId)
+            .eq('completed', false)
+            .ilike('title', '%' + taskQuery + '%')
+            .limit(1)
+            .maybeSingle()
+
+          if (matchedTask) {
+            await admin
+              .from('planner_tasks')
+              .update({ completed: true })
+              .eq('id', matchedTask.id)
+              .eq('user_id', userId)
+            await sendLineReply(replyToken, [createTaskDoneFlex(matchedTask.title)])
+          } else {
+            await sendLineReply(replyToken, [{ type: 'text', text: 'ยังหา task ที่ชื่อใกล้กับ "' + taskQuery + '" ไม่เจอครับ ลองกด /list เพื่อดูรายการอีกครั้งนะ' }])
+          }
           continue
         }
 

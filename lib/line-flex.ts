@@ -1,395 +1,542 @@
 import type { LineFlexMessage } from '@/lib/line'
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  LINE Flex Message — Liquid Glass aesthetic
+// Study Manager.koko · LINE Flex design system
 //
-//  Design language:
-//  • Zero emoji — ALL CAPS micro-labels only
-//  • linearGradient hero = "glass" depth without images
-//  • Frosted-panel illusion = pale tint bg + 1px white-ish border
-//  • White "sheen" strip at top of gradient = liquid glass highlight
-//  • Clean typographic hierarchy: xxs label → xl headline → xs body
-//  • Muted, sophisticated palette (no saturated primaries)
-//  • Maximum negative space
+// The cards intentionally use a small set of reusable primitives:
+//  • one clear hero with Koko as the visual anchor
+//  • one compact summary row
+//  • short, scannable content rows
+//  • one primary action and one secondary action
+//
+// Keeping the layout predictable matters on LINE because the same Flex JSON
+// can wrap differently across devices and font settings.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ── Palette ───────────────────────────────────────────────────────────────────
-// Each accent has four stops: deep (text) → mid (border) → frost (bg panel) → shine (highlight strip)
 const g = {
-  // Neutrals
-  void:     '#1A1210',     // deepest ink
-  ink:      '#2E1F16',
-  inkMid:   '#49362C',
-  sub:      '#7A6860',
-  ghost:    '#B0A098',
-  paper:    '#FDFBF8',
-  warm:     '#FAF6F0',
-  frost:    '#F5EFE8',     // "frosted glass" base
+  ink: '#2E1F16',
+  inkMid: '#49362C',
+  sub: '#7A6860',
+  ghost: '#A99B94',
+  paper: '#FDFBF8',
+  warm: '#FAF6F0',
+  frost: '#F5EFE8',
   hairline: '#E8DFD6',
-  white:    '#FFFFFF',
+  white: '#FFFFFF',
 
-  // Rose — status busy / task
-  rDeep:    '#8B2030',
-  rMid:     '#C84050',
-  rFrost:   '#FAF0F2',
-  rShine:   '#FFE8EC',
-  rBorder:  '#F0C8D0',
+  roseDeep: '#8B2030',
+  rose: '#C84050',
+  roseFrost: '#FAF0F2',
+  roseBorder: '#F0C8D0',
 
-  // Sage — done / success
-  sDeep:    '#1E5040',
-  sMid:     '#3A7A5E',
-  sFrost:   '#EFF7F2',
-  sShine:   '#D8EFE4',
-  sBorder:  '#B8DCCB',
+  sageDeep: '#1E5040',
+  sage: '#3A7A5E',
+  sageFrost: '#EFF7F2',
+  sageBorder: '#B8DCCB',
 
-  // Sky — index / info
-  kDeep:    '#1A3858',
-  kMid:     '#2E6090',
-  kFrost:   '#EFF5FB',
-  kShine:   '#D4E8F5',
-  kBorder:  '#B8D4EA',
+  skyDeep: '#1A3858',
+  sky: '#2E6090',
+  skyFrost: '#EFF5FB',
+  skyBorder: '#B8D4EA',
 
-  // Iris — calendar / events
-  iDeep:    '#3A2060',
-  iMid:     '#6848A8',
-  iFrost:   '#F2EFF8',
-  iShine:   '#E0D8F2',
-  iBorder:  '#C8BAE8',
+  irisDeep: '#3A2060',
+  iris: '#6848A8',
+  irisFrost: '#F2EFF8',
+  irisBorder: '#C8BAE8',
 
-  // Amber — morning / priority-2
-  aDeep:    '#5C3A08',
-  aMid:     '#A06820',
-  aFrost:   '#FBF5E8',
-  aShine:   '#F0E0B8',
-  aBorder:  '#DEC898',
+  amberDeep: '#5C3A08',
+  amber: '#A06820',
+  amberFrost: '#FBF5E8',
+  amberBorder: '#DEC898',
 }
 
 type Fc = Record<string, unknown>
+type KokoMood = 'alert' | 'sleep' | 'study' | 'love' | 'happy' | 'angry' | 'sad' | 'peek' | 'cozy' | 'low-battery' | 'laptop'
 
-// ── Primitives ────────────────────────────────────────────────────────────────
+// Keep LINE image URLs public and HTTPS even when the app is running locally.
+const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL || ''
+const kokoBaseUrl = /^https:\/\//i.test(configuredAppUrl)
+  ? configuredAppUrl.replace(/\/$/, '')
+  : 'https://study-with-me-by-kokokao.vercel.app'
 
-const t = (value: string, o: Fc = {}): Fc =>
-  ({ type: 'text', text: value, color: g.inkMid, ...o })
-
-const hr = (color = g.hairline): Fc =>
-  ({ type: 'separator', color, margin: 'none' })
-
-// Micro label — ALL CAPS, tiny, tracks well
-const label = (text: string, color: string): Fc =>
-  t(text.toUpperCase(), { size: 'xxs', color, weight: 'bold' })
-
-// Slim pill — no emoji, caps text only
-const chip = (text: string, textColor: string, bg: string, border: string): Fc => ({
-  type: 'box', layout: 'vertical',
-  backgroundColor: bg,
-  cornerRadius: '4px',
-  paddingTop: 'xs', paddingBottom: 'xs',
-  paddingStart: 'md', paddingEnd: 'md',
-  borderWidth: '1px', borderColor: border,
-  contents: [label(text, textColor)],
+const kokoImage = (mood: KokoMood, size = 'xxl'): Fc => ({
+  type: 'image',
+  url: kokoBaseUrl + '/mascots/koko/koko-' + mood + '.png',
+  size,
+  aspectRatio: '1:1',
+  aspectMode: 'fit',
 })
 
-// Square icon cell — no emoji, just a flat colored square with a letter/number
-const iconCell = (content: string, size: string, textColor: string, bg: string, border: string): Fc => ({
-  type: 'box', layout: 'vertical',
-  width: size, height: size,
-  cornerRadius: '8px',
-  backgroundColor: bg,
-  borderWidth: '1px', borderColor: border,
-  alignItems: 'center', justifyContent: 'center',
-  contents: [t(content, { size: 'sm', weight: 'bold', color: textColor, align: 'center' })],
+const compact = (value: unknown, fallback = ''): string =>
+  String(value ?? fallback).replace(/\s+/g, ' ').trim()
+
+const t = (value: string, options: Fc = {}): Fc => ({
+  type: 'text',
+  text: value,
+  color: g.inkMid,
+  ...options,
 })
 
-// ── GLASS HERO BANNER ─────────────────────────────────────────────────────────
-// Technique breakdown:
-//   1. Box with linearGradient (deep → mid color)
-//   2. Absolute white "sheen" strip at top → liquid-glass highlight
-//   3. Absolute frosted panel in the middle → frosted glass content area
-//   4. Text sits inside the frosted panel
-const glassHero = (
-  gradDeep: string,
-  gradMid:  string,
-  angle:    string,
-  eyebrow:  string,
-  headline: string,
-  sub:      string,
-  height = '140px',
-): Fc => ({
-  type: 'box', layout: 'vertical', height, paddingAll: 'none',
-  background: {
-    type: 'linearGradient',
-    angle,
-    startColor: gradDeep,
-    endColor: gradMid,
-  },
+const label = (value: string, color: string): Fc =>
+  t(value.toUpperCase(), { size: 'xxs', color, weight: 'bold' })
+
+const hr = (color = g.hairline): Fc => ({
+  type: 'separator',
+  color,
+  margin: 'none',
+})
+
+const chip = (value: string, color: string, backgroundColor: string, borderColor: string): Fc => ({
+  type: 'box',
+  layout: 'vertical',
+  backgroundColor,
+  cornerRadius: '20px',
+  paddingTop: 'xs',
+  paddingBottom: 'xs',
+  paddingStart: 'md',
+  paddingEnd: 'md',
+  borderWidth: '1px',
+  borderColor,
+  contents: [label(value, color)],
+})
+
+const iconCell = (value: string, size: string, color: string, backgroundColor: string, borderColor: string): Fc => ({
+  type: 'box',
+  layout: 'vertical',
+  width: size,
+  height: size,
+  cornerRadius: '10px',
+  backgroundColor,
+  borderWidth: '1px',
+  borderColor,
+  alignItems: 'center',
+  justifyContent: 'center',
+  contents: [t(value, { size: 'sm', weight: 'bold', color, align: 'center' })],
+})
+
+const metricTile = (value: string, caption: string, color: string, backgroundColor: string, borderColor: string): Fc => ({
+  type: 'box',
+  layout: 'vertical',
+  flex: 1,
+  backgroundColor,
+  cornerRadius: '12px',
+  borderWidth: '1px',
+  borderColor,
+  paddingTop: 'md',
+  paddingBottom: 'md',
+  paddingStart: 'sm',
+  paddingEnd: 'sm',
+  alignItems: 'center',
   contents: [
-    // Relative base keeps absolute overlays valid and fills the fixed hero height.
-    {
-      type: 'box', layout: 'vertical', flex: 1, contents: [],
-    },
-    // White sheen strip — liquid glass highlight at the top
-    {
-      type: 'box', layout: 'vertical',
-      position: 'absolute',
-      offsetTop: '0px', offsetStart: '0px', offsetEnd: '0px',
-      height: '2px',
-      backgroundColor: '#FFFFFF70',
-      contents: [],
-    },
-    // Frosted glass content panel
-    {
-      type: 'box', layout: 'vertical',
-      position: 'absolute',
-      offsetTop: '0px', offsetBottom: '0px',
-      offsetStart: '0px', offsetEnd: '0px',
-      paddingAll: 'xl', paddingBottom: 'xl',
-      justifyContent: 'flex-end',
-      contents: [
-        // Eyebrow label
-        {
-          type: 'box', layout: 'horizontal',
-          margin: 'sm',
-          contents: [
-            {
-              type: 'box', layout: 'vertical',
-              backgroundColor: '#FFFFFF22',
-              cornerRadius: '3px',
-              paddingTop: 'xs', paddingBottom: 'xs',
-              paddingStart: 'sm', paddingEnd: 'sm',
-              borderWidth: '1px', borderColor: '#FFFFFF40',
-              contents: [t(eyebrow.toUpperCase(), { size: 'xxs', color: '#FFFFFFCC', weight: 'bold' })],
-            },
-            { type: 'box', layout: 'vertical', flex: 1, contents: [] },
-          ],
-        },
-        // Headline
-        t(headline, { size: 'xxl', weight: 'bold', color: '#FDFBF8', wrap: true }),
-        // Sub
-        t(sub, { size: 'xs', color: '#FFFFFFAA', wrap: true, margin: 'xs' }),
-      ],
-    },
+    t(value, { size: 'lg', weight: 'bold', color, align: 'center' }),
+    t(caption, { size: 'xxs', color: g.sub, align: 'center', margin: 'xs', wrap: true }),
   ],
 })
 
-// ── Glass panel (body section) ────────────────────────────────────────────────
-// Frosted card inside white body — pale tinted bg + thin border = glass illusion
-const glassPanel = (contents: Fc[], bg: string, border: string): Fc => ({
-  type: 'box', layout: 'vertical',
-  backgroundColor: bg,
-  cornerRadius: '12px',
-  paddingAll: 'xl',
-  borderWidth: '1px', borderColor: border,
+const metricStrip = (tiles: Fc[]): Fc => ({
+  type: 'box',
+  layout: 'horizontal',
+  spacing: 'sm',
+  paddingTop: 'lg',
+  paddingBottom: 'lg',
+  paddingStart: 'xl',
+  paddingEnd: 'xl',
+  contents: tiles,
+})
+
+const panel = (contents: Fc[], backgroundColor: string, borderColor: string): Fc => ({
+  type: 'box',
+  layout: 'vertical',
+  backgroundColor,
+  cornerRadius: '14px',
+  borderWidth: '1px',
+  borderColor,
+  paddingAll: 'lg',
   contents,
 })
 
-// ── Ticker ────────────────────────────────────────────────────────────────────
-const ticker = (text: string, bg: string, textColor: string): Fc => ({
-  type: 'box', layout: 'horizontal',
-  backgroundColor: bg,
-  paddingTop: 'md', paddingBottom: 'md',
-  paddingStart: 'xl', paddingEnd: 'xl',
+const ticker = (message: string, backgroundColor: string, color: string): Fc => ({
+  type: 'box',
+  layout: 'horizontal',
+  backgroundColor,
+  paddingTop: 'md',
+  paddingBottom: 'md',
+  paddingStart: 'xl',
+  paddingEnd: 'xl',
   alignItems: 'center',
   contents: [
-    { type: 'box', layout: 'vertical', width: '2px', height: '14px', backgroundColor: textColor, cornerRadius: '2px', contents: [] },
-    t(text, { size: 'xs', color: textColor, weight: 'bold', wrap: true, flex: 1, margin: 'md' }),
+    { type: 'box', layout: 'vertical', width: '3px', height: '16px', backgroundColor: color, cornerRadius: '3px', contents: [] },
+    t(message, { size: 'xs', color, weight: 'bold', wrap: true, flex: 1, margin: 'md' }),
   ],
 })
 
-// ── Buttons ───────────────────────────────────────────────────────────────────
-const solidBtn = (label_: string, msg: string, bg: string): Fc => ({
-  type: 'button', style: 'primary', height: 'sm', color: bg,
-  action: { type: 'message', label: label_, text: msg },
-})
-const ghostBtn = (label_: string, msg: string): Fc => ({
-  type: 'button', style: 'secondary', height: 'sm', color: g.hairline,
-  action: { type: 'message', label: label_, text: msg },
-})
-const footerBar = (...btns: Fc[]): Fc => ({
-  type: 'box', layout: 'horizontal', spacing: 'sm',
-  paddingTop: 'lg', paddingBottom: 'xl',
-  paddingStart: 'lg', paddingEnd: 'lg',
-  backgroundColor: g.frost,
-  contents: btns,
+const messageButton = (buttonLabel: string, text: string, backgroundColor: string, style: 'primary' | 'secondary' = 'primary'): Fc => ({
+  type: 'button',
+  style,
+  height: 'sm',
+  color: backgroundColor,
+  action: { type: 'message', label: buttonLabel, text },
 })
 
-// ── Bubble shell ──────────────────────────────────────────────────────────────
+const doneButton = (task: Record<string, unknown>): Fc => {
+  const title = compact(task.title, 'รายการใหม่')
+  const action = task.id
+    ? {
+        type: 'postback',
+        label: 'เสร็จ',
+        data: 'action=complete_task&taskId=' + encodeURIComponent(String(task.id)),
+        displayText: 'ทำเสร็จแล้ว: ' + title,
+      }
+    : { type: 'message', label: 'เสร็จ', text: '/done ' + title }
+
+  return {
+    type: 'button',
+    style: 'secondary',
+    height: 'sm',
+    color: g.sageFrost,
+    action,
+  }
+}
+
+const footerBar = (...buttons: Fc[]): Fc => ({
+  type: 'box',
+  layout: 'horizontal',
+  spacing: 'sm',
+  paddingTop: 'lg',
+  paddingBottom: 'xl',
+  paddingStart: 'lg',
+  paddingEnd: 'lg',
+  backgroundColor: g.frost,
+  contents: buttons,
+})
+
 const shell = (body: Fc[], footer?: Fc): Record<string, unknown> => ({
-  type: 'bubble', size: 'mega',
+  type: 'bubble',
+  size: 'mega',
   styles: {
-    body:   { backgroundColor: g.paper },
+    body: { backgroundColor: g.paper },
     footer: { backgroundColor: g.frost, separator: true, separatorColor: g.hairline },
   },
   body: {
-    type: 'box', layout: 'vertical', spacing: 'none', paddingAll: 'none',
+    type: 'box',
+    layout: 'vertical',
+    spacing: 'none',
+    paddingAll: 'none',
     contents: body,
   },
   ...(footer ? { footer } : {}),
 })
 
-// ── Priority map ──────────────────────────────────────────────────────────────
-function prioStyle(n: number | null | undefined) {
-  if (n === 3) return { label: 'Urgent',  textColor: g.rDeep, bg: g.rFrost, border: g.rBorder, accent: g.rMid  }
-  if (n === 2) return { label: 'Normal',  textColor: g.aDeep, bg: g.aFrost, border: g.aBorder, accent: g.aMid  }
-  return              { label: 'Low',     textColor: g.sDeep, bg: g.sFrost, border: g.sBorder, accent: g.sMid  }
+const brandHero = (
+  backgroundColor: string,
+  borderColor: string,
+  mood: KokoMood,
+  eyebrow: string,
+  headline: string,
+  subheadline: string,
+  height = '132px',
+): Fc => ({
+  type: 'box',
+  layout: 'horizontal',
+  height,
+  paddingAll: 'lg',
+  backgroundColor,
+  alignItems: 'center',
+  contents: [
+    {
+      type: 'box',
+      layout: 'vertical',
+      flex: 1,
+      spacing: 'xs',
+      contents: [
+        {
+          type: 'box',
+          layout: 'horizontal',
+          contents: [chip(eyebrow, g.inkMid, g.white + 'B8', borderColor)],
+        },
+        t(headline, { size: 'xl', weight: 'bold', color: g.ink, wrap: true, maxLines: 2, margin: 'sm' }),
+        t(subheadline, { size: 'xs', color: g.sub, wrap: true, maxLines: 2 }),
+      ],
+    },
+    {
+      type: 'box',
+      layout: 'vertical',
+      width: '96px',
+      height: '96px',
+      cornerRadius: '48px',
+      backgroundColor: g.white + 'B8',
+      alignItems: 'center',
+      justifyContent: 'center',
+      contents: [kokoImage(mood, 'xxl')],
+    },
+  ],
+})
+
+function prioStyle(priority: number | null | undefined) {
+  if (priority === 3) return { label: 'Urgent', color: g.roseDeep, backgroundColor: g.roseFrost, borderColor: g.roseBorder, accent: g.rose }
+  if (priority === 2) return { label: 'Normal', color: g.amberDeep, backgroundColor: g.amberFrost, borderColor: g.amberBorder, accent: g.amber }
+  return { label: 'Low', color: g.sageDeep, backgroundColor: g.sageFrost, borderColor: g.sageBorder, accent: g.sage }
 }
 
-function evStyle(type: string | undefined) {
-  if (type === 'exam')        return { label: 'Exam',        textColor: g.rDeep, bg: g.rFrost, border: g.rBorder, accent: g.rMid  }
-  if (type === 'competition') return { label: 'Competition', textColor: g.aDeep, bg: g.aFrost, border: g.aBorder, accent: g.aMid  }
-  if (type === 'project')     return { label: 'Project',     textColor: g.kDeep, bg: g.kFrost, border: g.kBorder, accent: g.kMid  }
-  return                              { label: 'Important',  textColor: g.iDeep, bg: g.iFrost, border: g.iBorder, accent: g.iMid  }
+function eventStyle(type: string | undefined) {
+  if (type === 'exam') return { label: 'Exam', color: g.roseDeep, backgroundColor: g.roseFrost, borderColor: g.roseBorder, accent: g.rose, mood: 'alert' as KokoMood }
+  if (type === 'competition') return { label: 'Competition', color: g.amberDeep, backgroundColor: g.amberFrost, borderColor: g.amberBorder, accent: g.amber, mood: 'happy' as KokoMood }
+  if (type === 'project') return { label: 'Project', color: g.skyDeep, backgroundColor: g.skyFrost, borderColor: g.skyBorder, accent: g.sky, mood: 'study' as KokoMood }
+  return { label: 'Important', color: g.irisDeep, backgroundColor: g.irisFrost, borderColor: g.irisBorder, accent: g.iris, mood: 'love' as KokoMood }
+}
+
+function dateParts(value: string) {
+  const parts = value.split('-')
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const monthIndex = Number(parts[1]) - 1
+  return {
+    day: parts[2] || '--',
+    month: monthNames[monthIndex] || 'DATE',
+  }
+}
+
+function taskRow(task: Record<string, unknown>, index: number): Fc {
+  const priority = prioStyle(Number(task.priority))
+  const title = compact(task.title, 'รายการใหม่')
+  const subject = compact(task.subject, 'General')
+  const dueDate = compact(task.due_date, 'No deadline')
+  const meta = [subject !== 'General' ? subject : '', dueDate].filter(Boolean).join(' · ')
+
+  return {
+    type: 'box',
+    layout: 'horizontal',
+    spacing: 'sm',
+    paddingAll: 'md',
+    backgroundColor: index % 2 === 0 ? g.warm : g.paper,
+    cornerRadius: '10px',
+    alignItems: 'center',
+    contents: [
+      iconCell(String(index + 1), '28px', g.skyDeep, g.skyFrost, g.skyBorder),
+      {
+        type: 'box',
+        layout: 'vertical',
+        flex: 1,
+        spacing: 'xs',
+        contents: [
+          t(title, { size: 'sm', weight: 'bold', color: g.ink, wrap: true, maxLines: 2 }),
+          t(meta || 'No deadline', { size: 'xxs', color: g.ghost, wrap: true, maxLines: 1 }),
+        ],
+      },
+      {
+        type: 'box',
+        layout: 'vertical',
+        width: '54px',
+        spacing: 'xs',
+        alignItems: 'center',
+        contents: [
+          chip(priority.label, priority.color, priority.backgroundColor, priority.borderColor),
+          doneButton(task),
+        ],
+      },
+    ],
+  }
+}
+
+function eventRow(event: Record<string, unknown>, index: number): Fc {
+  const style = eventStyle(compact(event.type, 'important'))
+  const title = compact(event.title, 'วันสำคัญ')
+  const date = compact(event.event_date, 'TBD')
+  const parts = dateParts(date)
+  const notes = compact(event.notes)
+
+  return {
+    type: 'box',
+    layout: 'horizontal',
+    spacing: 'md',
+    paddingTop: 'md',
+    paddingBottom: 'md',
+    backgroundColor: index % 2 === 0 ? g.warm : g.paper,
+    cornerRadius: '10px',
+    alignItems: 'center',
+    contents: [
+      {
+        type: 'box',
+        layout: 'vertical',
+        width: '48px',
+        height: '48px',
+        cornerRadius: '12px',
+        backgroundColor: style.backgroundColor,
+        borderWidth: '1px',
+        borderColor: style.borderColor,
+        alignItems: 'center',
+        justifyContent: 'center',
+        contents: [
+          t(parts.day, { size: 'lg', weight: 'bold', color: style.color, align: 'center' }),
+          t(parts.month, { size: 'xxs', weight: 'bold', color: style.color, align: 'center', margin: 'none' }),
+        ],
+      },
+      {
+        type: 'box',
+        layout: 'vertical',
+        flex: 1,
+        spacing: 'xs',
+        contents: [
+          t(title, { size: 'sm', weight: 'bold', color: g.ink, wrap: true, maxLines: 2 }),
+          t(notes || date, { size: 'xxs', color: g.ghost, wrap: true, maxLines: 1 }),
+        ],
+      },
+      chip(style.label, style.color, style.backgroundColor, style.borderColor),
+    ],
+  }
+}
+
+function extraRow(count: number, color: string): Fc {
+  return {
+    type: 'box',
+    layout: 'horizontal',
+    paddingTop: 'md',
+    paddingBottom: 'xs',
+    alignItems: 'center',
+    contents: [
+      { type: 'box', layout: 'vertical', width: '3px', height: '14px', backgroundColor: color, cornerRadius: '3px', contents: [] },
+      t('+' + count + ' รายการเพิ่มเติม', { size: 'xxs', color: g.ghost, margin: 'md' }),
+    ],
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  STATUS CARD
+// STATUS
 // ═════════════════════════════════════════════════════════════════════════════
 export function createStatusFlex(count: number | null): LineFlexMessage {
-  const n    = Math.max(0, count ?? 0)
-  const busy = n > 0
-
-  const heroDeep  = busy ? '#6B1520' : '#1A4030'
-  const heroMid   = busy ? '#C84050' : '#2E7A58'
-  const panelBg   = busy ? g.rFrost  : g.sFrost
-  const panelBdr  = busy ? g.rBorder : g.sBorder
-  const numColor  = busy ? g.rMid    : g.sMid
+  const pending = Math.max(0, count ?? 0)
+  const clear = pending === 0
 
   return {
     type: 'flex',
-    altText: `Study Manager · ${busy ? `งานค้าง ${n} รายการ` : 'ไม่มีงานค้าง'}`,
+    altText: 'Study Manager.koko · ' + (clear ? 'ไม่มีงานค้าง' : 'มีงานค้าง ' + pending + ' รายการ'),
     contents: shell(
       [
-        glassHero(
-          heroDeep, heroMid, '145deg',
-          'Study Manager.koko · Status',
-          busy ? `${n} รายการรออยู่` : 'เสร็จทั้งหมดแล้ว',
-          busy ? 'ค่อยๆ ทำทีละอย่าง' : 'วันนี้ดีมาก',
+        brandHero(
+          clear ? g.sageFrost : g.roseFrost,
+          clear ? g.sageBorder : g.roseBorder,
+          clear ? 'happy' : 'alert',
+          'Koko Status',
+          clear ? 'วันนี้เคลียร์หมดแล้ว' : pending + ' งานรออยู่',
+          clear ? 'พักได้อย่างสบายใจเลย' : 'เริ่มจากงานที่ใกล้ที่สุดก่อน',
         ),
-
+        metricStrip([
+          metricTile(String(pending), 'Pending tasks', clear ? g.sageDeep : g.roseDeep, clear ? g.sageFrost : g.roseFrost, clear ? g.sageBorder : g.roseBorder),
+          metricTile(clear ? 'Ready' : 'Next', 'Your status', g.skyDeep, g.skyFrost, g.skyBorder),
+          metricTile('Koko', 'Study buddy', g.amberDeep, g.amberFrost, g.amberBorder),
+        ]),
         {
-          type: 'box', layout: 'vertical',
-          paddingAll: 'xl', paddingTop: 'lg', paddingBottom: 'none',
+          type: 'box',
+          layout: 'vertical',
+          paddingStart: 'xl',
+          paddingEnd: 'xl',
+          paddingBottom: 'lg',
           contents: [
-            glassPanel(
+            panel(
               [
-                {
-                  type: 'box', layout: 'horizontal', alignItems: 'center',
-                  contents: [
-                    { type: 'box', layout: 'vertical', flex: 1, spacing: 'xs', contents: [
-                      label(busy ? 'Pending tasks' : 'All clear', busy ? g.rDeep : g.sDeep),
-                      t(busy ? 'อย่าลืมพักด้วยนะ' : 'วันนี้เก่งมาก', { size: 'xs', color: g.sub, margin: 'xs' }),
-                    ]},
-                    t(String(n), { size: '5xl', weight: 'bold', color: numColor }),
-                  ],
-                },
+                label(clear ? 'All clear' : 'Small next step', clear ? g.sageDeep : g.roseDeep),
+                t(clear ? 'ถ้ามีแผนใหม่ บอก Koko ได้เลย' : 'ทำทีละงาน แล้วอย่าลืมพักด้วยนะ', { size: 'sm', color: g.sub, wrap: true, margin: 'sm' }),
               ],
-              panelBg, panelBdr,
+              clear ? g.sageFrost : g.roseFrost,
+              clear ? g.sageBorder : g.roseBorder,
             ),
           ],
         },
-
-        { type: 'box', layout: 'vertical', height: '16px', contents: [] },
         hr(),
-        ticker(
-          busy ? 'พร้อมช่วยจัดการแผนวันนี้เสมอ' : 'ถ้ามีงานใหม่บอกได้เลย',
-          panelBg, numColor,
-        ),
+        ticker(clear ? 'เก็บ momentum แบบสบายๆ ต่อได้เลย' : 'Koko ช่วยจัดลำดับให้แล้ว', clear ? g.sageFrost : g.roseFrost, clear ? g.sage : g.rose),
       ],
       footerBar(
-        solidBtn(busy ? 'ดูรายการทั้งหมด' : 'เพิ่มงานใหม่', busy ? '/list' : '/todo ', busy ? g.rMid : g.sMid),
-        solidBtn('วันสำคัญ', '/events', g.iMid),
+        messageButton(clear ? 'เพิ่มงานใหม่' : 'ดูรายการงาน', clear ? '/todo ' : '/list', clear ? g.sage : g.rose),
+        messageButton('วันสำคัญ', '/events', g.iris),
       ),
     ),
   }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  MORNING REMINDER
+// TASK COMPLETED
 // ═════════════════════════════════════════════════════════════════════════════
-export function createMorningReminderFlex(
-  tasks: Array<Record<string, unknown>>,
-  date: string,
-): LineFlexMessage {
-
-  const rows: Fc[] = tasks.slice(0, 5).map((task, i) => {
-    const pr    = prioStyle(Number(task.priority))
-    const title = String(task.title  || 'รายการใหม่')
-    const subj  = task.subject && task.subject !== 'General' ? String(task.subject) : 'General'
-
-    return {
-      type: 'box', layout: 'horizontal', spacing: 'lg',
-      paddingTop: 'md', paddingBottom: 'md',
-      paddingStart: 'xl', paddingEnd: 'xl',
-      backgroundColor: i % 2 === 0 ? g.warm : g.paper,
-      alignItems: 'center',
-      contents: [
-        // Number cell — no emoji, just the number
-        iconCell(`${i + 1}`, '28px', g.kMid, g.kFrost, g.kBorder),
-        // Info
-        { type: 'box', layout: 'vertical', flex: 1, spacing: 'xs', contents: [
-          t(title, { size: 'sm', weight: 'bold', wrap: true, maxLines: 2, color: g.ink }),
-          t(subj,  { size: 'xxs', color: g.ghost }),
-        ]},
-        chip(pr.label, pr.textColor, pr.bg, pr.border),
-      ],
-    }
-  })
-
-  const extra = Math.max(0, tasks.length - 5)
-
-  const body: Fc[] = [
-    glassHero(
-      g.aDeep, g.aMid, '150deg',
-      'Study Manager.koko · Morning',
-      'แผนวันนี้',
-      `${date} · ${tasks.length} รายการรออยู่`,
-    ),
-
-    // Count row
-    {
-      type: 'box', layout: 'horizontal',
-      paddingStart: 'xl', paddingEnd: 'xl',
-      paddingTop: 'lg', paddingBottom: 'md',
-      alignItems: 'center',
-      contents: [
-        t('รายการวันนี้', { size: 'xs', weight: 'bold', color: g.sub, flex: 1 }),
-        chip(`${tasks.length} Tasks`, g.aDeep, g.aFrost, g.aBorder),
-      ],
-    },
-
-    hr(),
-
-    { type: 'box', layout: 'vertical', spacing: 'none', contents: rows },
-  ]
-
-  if (extra > 0) {
-    body.push({
-      type: 'box', layout: 'horizontal',
-      paddingAll: 'lg', alignItems: 'center',
-      contents: [
-        { type: 'box', layout: 'vertical', width: '2px', height: '14px', backgroundColor: g.ghost, cornerRadius: '2px', contents: [] },
-        t(`+${extra} รายการ`, { size: 'xs', color: g.ghost, margin: 'md' }),
-      ],
-    })
-  }
-
-  body.push(hr())
-  body.push(ticker('เริ่มจากงานเล็กที่สุดก่อนก็ได้', g.aFrost, g.aMid))
+export function createTaskDoneFlex(title: string): LineFlexMessage {
+  const taskTitle = compact(title, 'รายการใหม่')
 
   return {
     type: 'flex',
-    altText: `Good Morning · วันนี้มีงาน ${tasks.length} รายการ`,
+    altText: 'ทำงานเสร็จแล้ว: ' + taskTitle,
     contents: shell(
-      body,
+      [
+        brandHero(g.sageFrost, g.sageBorder, 'happy', 'Koko Win', 'ทำเสร็จแล้ว', taskTitle),
+        metricStrip([
+          metricTile('Done', 'Task status', g.sageDeep, g.sageFrost, g.sageBorder),
+          metricTile('+1', 'Small win', g.amberDeep, g.amberFrost, g.amberBorder),
+        ]),
+        {
+          type: 'box',
+          layout: 'vertical',
+          paddingStart: 'xl',
+          paddingEnd: 'xl',
+          paddingBottom: 'lg',
+          contents: [
+            panel(
+              [t('ก้าวเล็กๆ แบบนี้รวมกันเป็น progress ใหญ่ได้จริง', { size: 'sm', color: g.sub, wrap: true })],
+              g.sageFrost,
+              g.sageBorder,
+            ),
+          ],
+        },
+      ],
       footerBar(
-        solidBtn('ดูรายการ', '/list',   g.rMid),
-        solidBtn('สถานะ',    '/status', g.sMid),
+        messageButton('ดูงานที่เหลือ', '/list', g.sage),
+        messageButton('เช็กสถานะ', '/status', g.sky),
       ),
     ),
   }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  TASK LIST CAROUSEL
+// MORNING REMINDER
+// ═════════════════════════════════════════════════════════════════════════════
+export function createMorningReminderFlex(tasks: Array<Record<string, unknown>>, date: string): LineFlexMessage {
+  const visible = tasks.slice(0, 5)
+  const urgentCount = tasks.filter((task) => Number(task.priority) === 3).length
+  const estimatedMinutes = tasks.reduce((total, task) => total + Math.max(0, Number(task.estimated_minutes) || 0), 0)
+  const rows = visible.map((task, index) => taskRow(task, index))
+  const body: Fc[] = [
+    brandHero(g.amberFrost, g.amberBorder, 'study', 'Good Morning', 'แผนวันนี้', date + ' · ' + tasks.length + ' งานรออยู่'),
+    metricStrip([
+      metricTile(String(tasks.length), 'Tasks', g.amberDeep, g.amberFrost, g.amberBorder),
+      metricTile(String(urgentCount), 'Urgent', g.roseDeep, g.roseFrost, g.roseBorder),
+      metricTile(estimatedMinutes > 0 ? estimatedMinutes + 'm' : '—', 'Est. focus', g.skyDeep, g.skyFrost, g.skyBorder),
+    ]),
+    {
+      type: 'box',
+      layout: 'vertical',
+      paddingStart: 'xl',
+      paddingEnd: 'xl',
+      contents: [
+        label("Today's queue", g.sub),
+        { type: 'box', layout: 'vertical', spacing: 'xs', margin: 'md', contents: rows },
+      ],
+    },
+  ]
+
+  if (tasks.length > visible.length) body.push(extraRow(tasks.length - visible.length, g.amber))
+  body.push(hr())
+  body.push(ticker('เริ่มจากงานเล็กที่สุดก่อนก็ได้', g.amberFrost, g.amber))
+
+  return {
+    type: 'flex',
+    altText: 'Good Morning · วันนี้มีงาน ' + tasks.length + ' รายการ',
+    contents: shell(
+      body,
+      footerBar(
+        messageButton('ดูรายการ', '/list', g.rose),
+        messageButton('เช็กสถานะ', '/status', g.sage),
+      ),
+    ),
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// TASK SUMMARY
 // ═════════════════════════════════════════════════════════════════════════════
 export function createTasksFlex(tasks: Array<Record<string, unknown>>): LineFlexMessage {
   if (tasks.length === 0) {
@@ -398,90 +545,78 @@ export function createTasksFlex(tasks: Array<Record<string, unknown>>): LineFlex
       altText: 'ไม่มีงานค้างแล้ว',
       contents: shell(
         [
-          glassHero(g.sDeep, g.sMid, '140deg', 'Study Manager.koko · To-Do', 'ไม่มีงานค้างแล้ว', 'พักหายใจได้เลย'),
+          brandHero(g.sageFrost, g.sageBorder, 'cozy', 'Koko To-Do', 'ไม่มีงานค้างแล้ว', 'พักหายใจได้เลย หรือเริ่มแผนใหม่เมื่อพร้อม'),
+          metricStrip([
+            metricTile('0', 'Pending', g.sageDeep, g.sageFrost, g.sageBorder),
+            metricTile('100%', 'Clear', g.skyDeep, g.skyFrost, g.skyBorder),
+          ]),
           {
-            type: 'box', layout: 'vertical', paddingAll: 'xl', paddingTop: 'lg',
+            type: 'box',
+            layout: 'vertical',
+            paddingStart: 'xl',
+            paddingEnd: 'xl',
+            paddingBottom: 'lg',
             contents: [
-              glassPanel([
-                t('สะอาด', { size: 'xl', weight: 'bold', color: g.sMid }),
-                t('พักหายใจได้เลย หรือเพิ่มงานใหม่เมื่อพร้อม', { size: 'xs', color: g.sub, wrap: true, margin: 'sm' }),
-              ], g.sFrost, g.sBorder),
+              panel(
+                [t('หน้า inbox สะอาดแล้ว เก่งมากครับ', { size: 'sm', color: g.sub, wrap: true })],
+                g.sageFrost,
+                g.sageBorder,
+              ),
             ],
           },
         ],
-        footerBar(solidBtn('เพิ่มงานใหม่', '/todo ', g.sMid)),
+        footerBar(messageButton('เพิ่มงานใหม่', '/todo ', g.sage)),
       ),
     }
   }
 
-  const cards = tasks.slice(0, 10).map((task) => {
-    const pr    = prioStyle(Number(task.priority))
-    const title = String(task.title  || 'รายการใหม่')
-    const subj  = task.subject && task.subject !== 'General' ? String(task.subject) : 'General'
-    const due   = task.due_date ? String(task.due_date) : 'No deadline'
+  const visible = tasks.slice(0, 6)
+  const urgentCount = tasks.filter((task) => Number(task.priority) === 3).length
+  const estimatedMinutes = tasks.reduce((total, task) => total + Math.max(0, Number(task.estimated_minutes) || 0), 0)
 
-    return shell(
-      [
-        glassHero(g.rDeep, g.rMid, '145deg', 'Study Manager.koko · To-Do', title, subj, '110px'),
-
-        {
-          type: 'box', layout: 'vertical',
-          paddingAll: 'xl', paddingTop: 'lg', paddingBottom: 'none', spacing: 'md',
-          contents: [
-            // Priority row
-            {
-              type: 'box', layout: 'horizontal', alignItems: 'center', spacing: 'sm',
-              contents: [
-                label('Priority', g.ghost),
-                { type: 'box', layout: 'vertical', flex: 1, contents: [] },
-                chip(pr.label, pr.textColor, pr.bg, pr.border),
-              ],
-            },
-            // Due date panel — glass look
-            glassPanel(
-              [
-                {
-                  type: 'box', layout: 'horizontal', alignItems: 'center',
-                  contents: [
-                    { type: 'box', layout: 'vertical', spacing: 'xs', flex: 1, contents: [
-                      label('Due Date', g.ghost),
-                      t(due, { size: 'md', weight: 'bold', color: g.ink, margin: 'xs' }),
-                    ]},
-                    // Right accent bar — no emoji, just a thin vertical line
-                    { type: 'box', layout: 'vertical',
-                      width: '3px', height: '36px',
-                      backgroundColor: g.rBorder,
-                      cornerRadius: '3px',
-                      contents: [],
-                    },
-                  ],
-                },
-              ],
-              g.rFrost, g.rBorder,
-            ),
-          ],
-        },
-
-        { type: 'box', layout: 'vertical', height: '16px', contents: [] },
-        hr(),
-        ticker('กดปุ่มด้านล่างเมื่อทำเสร็จแล้ว', g.rFrost, g.rMid),
+  const body: Fc[] = [
+    brandHero(
+      urgentCount > 0 ? g.roseFrost : g.skyFrost,
+      urgentCount > 0 ? g.roseBorder : g.skyBorder,
+      urgentCount > 0 ? 'alert' : 'laptop',
+      'Koko To-Do',
+      tasks.length + ' งานที่ต้องดู',
+      urgentCount > 0 ? urgentCount + ' งานควรจัดการก่อน' : 'เลือกทีละงาน แล้วเดินหน้าต่อ',
+    ),
+    metricStrip([
+      metricTile(String(tasks.length), 'Pending', g.roseDeep, g.roseFrost, g.roseBorder),
+      metricTile(String(urgentCount), 'Urgent', g.amberDeep, g.amberFrost, g.amberBorder),
+      metricTile(estimatedMinutes > 0 ? estimatedMinutes + 'm' : '—', 'Est. focus', g.skyDeep, g.skyFrost, g.skyBorder),
+    ]),
+    {
+      type: 'box',
+      layout: 'vertical',
+      paddingStart: 'xl',
+      paddingEnd: 'xl',
+      contents: [
+        label('Your queue', g.sub),
+        { type: 'box', layout: 'vertical', spacing: 'xs', margin: 'md', contents: visible.map(taskRow) },
       ],
-      footerBar(
-        solidBtn('Mark as Done', `/done ${title}`, g.sMid),
-        ghostBtn('ดูทั้งหมด', '/list'),
-      ),
-    )
-  })
+    },
+  ]
+
+  if (tasks.length > visible.length) body.push(extraRow(tasks.length - visible.length, g.rose))
 
   return {
     type: 'flex',
-    altText: `To-Do · ${tasks.length} รายการ`,
-    contents: { type: 'carousel', contents: cards },
+    altText: 'To-Do · มีงานค้าง ' + tasks.length + ' รายการ',
+    contents: shell(
+      body,
+      footerBar(
+        messageButton('เพิ่มงาน', '/todo ', g.rose),
+        messageButton('วันสำคัญ', '/events', g.iris, 'secondary'),
+      ),
+    ),
   }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  EVENTS CAROUSEL
+// EVENT SUMMARY
 // ═════════════════════════════════════════════════════════════════════════════
 export function createEventsFlex(events: Array<Record<string, unknown>>): LineFlexMessage {
   if (events.length === 0) {
@@ -490,89 +625,66 @@ export function createEventsFlex(events: Array<Record<string, unknown>>): LineFl
       altText: 'ยังไม่มีวันสำคัญ',
       contents: shell(
         [
-          glassHero(g.iDeep, g.iMid, '145deg', 'Study Manager.koko · Calendar', 'ยังไม่มีวันสำคัญ', 'เพิ่มสอบ แข่งขัน หรือ Deadline'),
+          brandHero(g.irisFrost, g.irisBorder, 'peek', 'Koko Calendar', 'ปฏิทินยังว่างอยู่', 'เพิ่มสอบ แข่งขัน หรือวันสำคัญได้เลย'),
+          metricStrip([
+            metricTile('0', 'Upcoming', g.irisDeep, g.irisFrost, g.irisBorder),
+            metricTile('Ready', 'Plan ahead', g.skyDeep, g.skyFrost, g.skyBorder),
+          ]),
           {
-            type: 'box', layout: 'vertical', paddingAll: 'xl', paddingTop: 'lg',
+            type: 'box',
+            layout: 'vertical',
+            paddingStart: 'xl',
+            paddingEnd: 'xl',
+            paddingBottom: 'lg',
             contents: [
-              glassPanel([
-                t('ปฏิทินว่างอยู่', { size: 'xl', weight: 'bold', color: g.iMid }),
-                t('เพิ่มนัดหมายสำคัญได้เลย', { size: 'xs', color: g.sub, wrap: true, margin: 'sm' }),
-              ], g.iFrost, g.iBorder),
+              panel(
+                [t('เพิ่มหมุดหมายไว้ แล้ว Koko จะช่วยเตือนให้', { size: 'sm', color: g.sub, wrap: true })],
+                g.irisFrost,
+                g.irisBorder,
+              ),
             ],
           },
         ],
-        footerBar(solidBtn('เพิ่มวันสำคัญ', '/event ', g.iMid)),
+        footerBar(messageButton('เพิ่มวันสำคัญ', '/event ', g.iris)),
       ),
     }
   }
 
-  const cards = events.slice(0, 10).map((event) => {
-    const ev    = evStyle(String(event.type || 'important'))
-    const title = String(event.title      || 'วันสำคัญ')
-    const date  = String(event.event_date || 'TBD')
-
-    return shell(
-      [
-        glassHero(g.iDeep, g.iMid, '145deg', 'Study Manager.koko · Calendar', title, date, '120px'),
-
-        {
-          type: 'box', layout: 'vertical',
-          paddingAll: 'xl', paddingTop: 'lg', paddingBottom: 'none', spacing: 'md',
-          contents: [
-            // Type chip row
-            {
-              type: 'box', layout: 'horizontal', alignItems: 'center',
-              contents: [
-                label('Type', g.ghost),
-                { type: 'box', layout: 'vertical', flex: 1, contents: [] },
-                chip(ev.label, ev.textColor, ev.bg, ev.border),
-              ],
-            },
-            // Date panel — glass
-            glassPanel(
-              [
-                {
-                  type: 'box', layout: 'horizontal', alignItems: 'center',
-                  contents: [
-                    { type: 'box', layout: 'vertical', flex: 1, spacing: 'xs', contents: [
-                      label('Date', g.ghost),
-                      t(date, { size: 'lg', weight: 'bold', color: g.ink, margin: 'xs' }),
-                    ]},
-                    { type: 'box', layout: 'vertical',
-                      width: '3px', height: '36px',
-                      backgroundColor: g.iBorder,
-                      cornerRadius: '3px',
-                      contents: [],
-                    },
-                  ],
-                },
-                ...(event.notes ? [
-                  hr(g.iBorder),
-                  { type: 'box', layout: 'vertical', paddingTop: 'md', contents: [
-                    label('Notes', g.ghost),
-                    t(String(event.notes), { size: 'xs', color: g.sub, wrap: true, margin: 'xs' }),
-                  ]},
-                ] : []),
-              ],
-              g.iFrost, g.iBorder,
-            ),
-          ],
-        },
-
-        { type: 'box', layout: 'vertical', height: '16px', contents: [] },
-        hr(),
-        ticker('เตรียมตัวให้พร้อม เวลาผ่านเร็วกว่าที่คิด', g.iFrost, g.iMid),
+  const visible = events.slice(0, 6)
+  const examCount = events.filter((event) => compact(event.type) === 'exam').length
+  const firstStyle = eventStyle(compact(visible[0]?.type, 'important'))
+  const body: Fc[] = [
+    brandHero(g.irisFrost, g.irisBorder, firstStyle.mood, 'Koko Calendar', events.length + ' วันสำคัญ', examCount > 0 ? examCount + ' การสอบที่ต้องเตรียมตัว' : 'มองภาพรวม แล้ววางแผนล่วงหน้า'),
+    metricStrip([
+      metricTile(String(events.length), 'Upcoming', g.irisDeep, g.irisFrost, g.irisBorder),
+      metricTile(String(examCount), 'Exams', g.roseDeep, g.roseFrost, g.roseBorder),
+      metricTile('Plan', 'Ahead', g.skyDeep, g.skyFrost, g.skyBorder),
+    ]),
+    {
+      type: 'box',
+      layout: 'vertical',
+      paddingStart: 'xl',
+      paddingEnd: 'xl',
+      contents: [
+        label('Upcoming dates', g.sub),
+        { type: 'box', layout: 'vertical', spacing: 'xs', margin: 'md', contents: visible.map(eventRow) },
       ],
-      footerBar(
-        solidBtn('ดูทั้งหมด',      '/events', g.iMid),
-        ghostBtn('เพิ่มวันสำคัญ', '/event '),
-      ),
-    )
-  })
+    },
+  ]
+
+  if (events.length > visible.length) body.push(extraRow(events.length - visible.length, g.iris))
+  body.push(hr())
+  body.push(ticker('เตรียมตัวล่วงหน้า แล้ววันจริงจะเบาลง', g.irisFrost, g.iris))
 
   return {
     type: 'flex',
-    altText: `Calendar · ${events.length} รายการ`,
-    contents: { type: 'carousel', contents: cards },
+    altText: 'Calendar · มีวันสำคัญ ' + events.length + ' รายการ',
+    contents: shell(
+      body,
+      footerBar(
+        messageButton('ดูทั้งหมด', '/events', g.iris),
+        messageButton('เพิ่มวันสำคัญ', '/event ', g.amber, 'secondary'),
+      ),
+    ),
   }
 }
