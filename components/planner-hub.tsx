@@ -73,6 +73,8 @@ export function PlannerHub({ user, subjects, section = 'all' }: { user: User | n
   const [stepDrafts, setStepDrafts] = useState<Record<string, string>>({})
 
   useEffect(() => {
+    setData(emptyData)
+    setLoaded(false)
     const today = getLocalDateKey()
     setTaskDue((current) => current || today)
     setEventDate((current) => current || today)
@@ -118,7 +120,7 @@ export function PlannerHub({ user, subjects, section = 'all' }: { user: User | n
 
   const persist = (next: PlannerData) => {
     setData(next)
-    saveLocalPlannerData(next)
+    saveLocalPlannerData(next, user)
     void syncPlannerData(user, next)
   }
 

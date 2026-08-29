@@ -236,23 +236,24 @@ function TimerPage() {
 
   // 1. Initialize User, Today info, and Load Data
   useEffect(() => {
+    let requestId = 0
     const now = new Date()
     const key = getLocalDateKey(now)
     setMonthDate(new Date(now.getFullYear(), now.getMonth(), 1))
     setTodayKey(key)
     setTodayLabel(now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }))
-    setSessions(getLocalRounds(key))
-    setSubjects(getLocalSubjects())
+    setSessions(0)
+    setSubjects(['General'])
     setHighThreshold(getIntensityThreshold())
     setMounted(true)
 
     const loadData = async (currentUser: User | null) => {
+      const currentRequestId = ++requestId
       const nextLogs = await loadStudyLogs(currentUser)
+      if (currentRequestId !== requestId) return
       setLogs(nextLogs)
-      setSubjects((previous) => Array.from(new Set([...previous, ...getLocalSubjects()])))
+      setSubjects((previous) => Array.from(new Set([...previous, ...getLocalSubjects(currentUser)])))
     }
-
-    loadData(null)
 
     // Listen for intensity threshold changes from Settings modal
     const onStorage = (e: StorageEvent) => {
@@ -267,10 +268,25 @@ function TimerPage() {
     const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       const currentUser = session?.user ?? null
       setUser(currentUser)
+      setLogs({})
+      setSubjects(['General'])
+      setSessions(getLocalRounds(key, currentUser))
+      setSubjects(getLocalSubjects(currentUser))
       await loadData(currentUser)
     })
 
+    void supabase.auth.getSession().then(({ data: { session } }) => {
+      const currentUser = session?.user ?? null
+      setUser(currentUser)
+      setLogs({})
+      setSubjects(['General'])
+      setSessions(getLocalRounds(key, currentUser))
+      setSubjects(getLocalSubjects(currentUser))
+      return loadData(currentUser)
+    })
+
     return () => {
+      requestId += 1
       authListener.subscription.unsubscribe()
       window.removeEventListener('storage', onStorage)
     }
@@ -321,7 +337,7 @@ function TimerPage() {
       const newSessions = sessions + 1
       setSessions(newSessions)
       if (todayKey) {
-        saveLocalRounds(todayKey, newSessions)
+        saveLocalRounds(todayKey, newSessions, user)
       }
 
       const { updatedLogs } = await recordFocusSession(user, durationMins, mode, timerMode, selectedSubject)
@@ -519,7 +535,7 @@ function TimerPage() {
     const nextSubject = subjectDraft.trim().slice(0, 40)
     if (!nextSubject) return
     const nextSubjects = Array.from(new Set([...subjects, nextSubject]))
-    saveLocalSubjects(nextSubjects)
+    saveLocalSubjects(nextSubjects, user)
     setSubjects(nextSubjects)
     selectSubject(nextSubject)
     setSubjectDraft('')
@@ -910,7 +926,7 @@ function TimerPage() {
             setUser(nextUser)
             const updated = await loadStudyLogs(nextUser)
             setLogs(updated)
-            setSubjects((previous) => Array.from(new Set([...previous, ...getLocalSubjects()])))
+            setSubjects((previous) => Array.from(new Set([...previous, ...getLocalSubjects(nextUser)])))
           }}
       />
     </main>

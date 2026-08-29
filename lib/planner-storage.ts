@@ -54,6 +54,10 @@ export type PlannerData = {
 const STORAGE_KEY = 'study_timer_planner_v1'
 const emptyPlannerData = (): PlannerData => ({ tasks: [], goals: [], steps: [], events: [] })
 
+function scopedStorageKey(scope?: User | null) {
+  return scope?.id ? `${STORAGE_KEY}_${scope.id}` : STORAGE_KEY
+}
+
 function normalizeGoalSubjects(value: unknown) {
   if (!Array.isArray(value)) return []
   return Array.from(new Set(value.filter((item): item is string => typeof item === 'string' && Boolean(item.trim())).map((item) => item.trim())))
@@ -64,10 +68,10 @@ export function createPlannerId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
-export function loadLocalPlannerData(): PlannerData {
+export function loadLocalPlannerData(scope?: User | null): PlannerData {
   if (typeof window === 'undefined') return emptyPlannerData()
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(scopedStorageKey(scope))
     if (!raw) return emptyPlannerData()
     const parsed = JSON.parse(raw)
     return {
@@ -85,10 +89,10 @@ export function loadLocalPlannerData(): PlannerData {
   }
 }
 
-export function saveLocalPlannerData(data: PlannerData) {
+export function saveLocalPlannerData(data: PlannerData, scope?: User | null) {
   if (typeof window === 'undefined') return
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+    localStorage.setItem(scopedStorageKey(scope), JSON.stringify(data))
   } catch (error) {
     console.error('Failed to save planner data:', error)
   }
@@ -99,7 +103,7 @@ function mergeById<T extends { id: string }>(cloud: T[], local: T[]) {
 }
 
 export async function loadPlannerData(user: User | null): Promise<PlannerData> {
-  const local = loadLocalPlannerData()
+  const local = loadLocalPlannerData(user)
   if (!user) return local
 
   try {
@@ -138,7 +142,7 @@ export async function loadPlannerData(user: User | null): Promise<PlannerData> {
       steps: mergeById(local.steps, cloud.steps),
       events: mergeById(local.events, cloud.events),
     }
-    saveLocalPlannerData(merged)
+    saveLocalPlannerData(merged, user)
     return merged
   } catch (error) {
     console.error('Failed to load planner data:', error)

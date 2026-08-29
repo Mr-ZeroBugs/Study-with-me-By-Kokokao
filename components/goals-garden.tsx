@@ -84,6 +84,9 @@ export function GoalsGarden({ user, subjects }: { user: User | null; subjects: s
   const [stepDrafts, setStepDrafts] = useState<Record<string, string>>({})
 
   useEffect(() => {
+    setData(emptyData)
+    setSubjectLogs({})
+    setLoaded(false)
     setTodayKey(getLocalDateKey())
     let active = true
     let loading = false
@@ -147,7 +150,7 @@ export function GoalsGarden({ user, subjects }: { user: User | null; subjects: s
 
   const persist = (next: PlannerData) => {
     setData(next)
-    saveLocalPlannerData(next)
+    saveLocalPlannerData(next, user)
     void syncPlannerData(user, next)
   }
 

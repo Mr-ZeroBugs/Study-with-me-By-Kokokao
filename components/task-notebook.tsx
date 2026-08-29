@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BookOpen, CalendarDays, Circle, Coffee, Droplets, Flower2, Heart, ListChecks, MessageCircle, Moon, NotebookPen, Plus, Sparkles, Trash2 } from 'lucide-react'
 import { getLocalDateKey } from '../lib/storage'
 import type { GoalStep, LifeGoal, PlannerData, PlannerEvent, PlannerEventType, PlannerTask, TaskPriority } from '../lib/planner-storage'
@@ -11,6 +11,10 @@ import { supabase } from '../lib/supabase'
 
 const eventLabels: Record<PlannerEventType, string> = { competition: 'competition', project: 'project', exam: 'exam', important: 'important' }
 const NOTEBOOK_KEY = 'study_timer_task_notebook_v1'
+
+function notebookStorageKey(user: User | null) {
+  return user?.id ? `${NOTEBOOK_KEY}_${user.id}` : NOTEBOOK_KEY
+}
 
 type TaskNotebookProps = {
   user?: User | null
@@ -105,6 +109,7 @@ export function TaskNotebook({
   const [rememberNote, setRememberNote] = useState('')
   const [pageNote, setPageNote] = useState('')
   const [notesReady, setNotesReady] = useState(false)
+  const skipNextNotesWriteRef = useRef(false)
   const [calendarDate, setCalendarDate] = useState(() => new Date(2000, 0, 1))
   const [selectedDate, setSelectedDate] = useState('')
   const [captureType, setCaptureType] = useState<CaptureType>('task')
@@ -136,20 +141,26 @@ export function TaskNotebook({
 
 
   useEffect(() => {
+    skipNextNotesWriteRef.current = true
+    setNotesReady(false)
     try {
-      const saved = JSON.parse(window.localStorage.getItem(NOTEBOOK_KEY) ?? '{}') as Record<string, unknown>
+      const saved = JSON.parse(window.localStorage.getItem(notebookStorageKey(currentUser)) ?? '{}') as Record<string, unknown>
       setRememberNote(typeof saved.remember === 'string' ? saved.remember : '')
       setPageNote(typeof saved.page === 'string' ? saved.page : '')
     } catch {
       // Notes are optional; a malformed local value should never block the task page.
     }
     setNotesReady(true)
-  }, [])
+  }, [currentUser])
 
   useEffect(() => {
     if (!notesReady) return
-    window.localStorage.setItem(NOTEBOOK_KEY, JSON.stringify({ remember: rememberNote, page: pageNote }))
-  }, [notesReady, pageNote, rememberNote])
+    if (skipNextNotesWriteRef.current) {
+      skipNextNotesWriteRef.current = false
+      return
+    }
+    window.localStorage.setItem(notebookStorageKey(currentUser), JSON.stringify({ remember: rememberNote, page: pageNote }))
+  }, [currentUser, notesReady, pageNote, rememberNote])
 
   useEffect(() => {
     const now = new Date()

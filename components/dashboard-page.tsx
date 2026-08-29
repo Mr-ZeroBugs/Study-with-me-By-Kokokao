@@ -52,27 +52,37 @@ export function DashboardPage() {
 
 
   useEffect(() => {
+    let requestId = 0
     setNow(new Date())
     const loadData = async (nextUser: User | null) => {
+      const currentRequestId = ++requestId
       const [nextLogs, nextSubjectLogs, nextPlanner] = await Promise.all([loadStudyLogs(nextUser), loadSubjectLogs(nextUser), loadPlannerData(nextUser)])
+      if (currentRequestId !== requestId) return
       setLogs(nextLogs)
       setSubjectLogs(nextSubjectLogs)
       setPlanner(nextPlanner)
-      setSubjects((previous) => Array.from(new Set([...previous, ...getLocalSubjects(), ...Object.keys(nextSubjectLogs)])))
+      setSubjects((previous) => Array.from(new Set([...previous, ...getLocalSubjects(nextUser), ...Object.keys(nextSubjectLogs)])))
     }
-    void loadData(null)
     supabase.auth.getSession().then(({ data }) => {
       const nextUser = data.session?.user ?? null
       setUser(nextUser)
+      setLogs({})
+      setSubjectLogs({})
+      setPlanner({ tasks: [], goals: [], steps: [], events: [] })
+      setSubjects(['General'])
       void loadData(nextUser)
     })
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       const nextUser = session?.user ?? null
       setUser(nextUser)
+      setLogs({})
+      setSubjectLogs({})
+      setPlanner({ tasks: [], goals: [], steps: [], events: [] })
+      setSubjects(['General'])
       void loadData(nextUser)
     })
     const interval = window.setInterval(() => setNow(new Date()), 60_000)
-    return () => { listener.subscription.unsubscribe(); window.clearInterval(interval) }
+    return () => { requestId += 1; listener.subscription.unsubscribe(); window.clearInterval(interval) }
   }, [])
 
   const todayKey = getLocalDateKey(now)
