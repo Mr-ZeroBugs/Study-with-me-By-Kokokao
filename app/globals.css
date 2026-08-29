@@ -1574,7 +1574,15 @@ html[data-theme="dark-glass"] .goal-garden-step { color: #c3cfdb; }.goal-garden-
 html[data-theme="dark-glass"] .goal-garden-step:hover { background: rgba(255, 255, 255, .07); }
 html[data-theme="dark-glass"] .goal-step-adder input { border-color: rgba(255, 255, 255, .16); background: rgba(255, 255, 255, .06); color: #f3f6fb; }.goal-step-adder input::placeholder { color: #8190a1; }
 html[data-theme="dark-glass"] .goal-step-adder button { border-color: rgba(134, 239, 172, .36); background: rgba(134, 239, 172, .12); color: #bbf7d0; }
-html[data-theme="dark-glass"] .goal-composer-card { border-color: rgba(255, 255, 255, .18); background: rgba(18, 24, 34, .96); box-shadow: 0 24px 58px rgba(0, 0, 0, .48), inset 0 1px 0 rgba(255, 255, 255, .08); }.goal-composer-card h2 { color: #f3f6fb; }.goal-composer-intro, html[data-theme="dark-glass"] .goal-composer-card label { color: #9aa7b8; }.goal-composer-close { border-color: rgba(255, 255, 255, .15); background: rgba(255, 255, 255, .07); color: #aebccc; }.goal-composer-close:hover { background: rgba(255, 255, 255, .13); color: #fff; }.goal-composer-card input, html[data-theme="dark-glass"] .goal-composer-card textarea { border-color: rgba(255, 255, 255, .15); background: rgba(255, 255, 255, .06); color: #f3f6fb; }.goal-composer-subjects { border-color: rgba(255, 255, 255, .14); }.goal-composer-subject-heading { color: #c4cfdb; }.goal-composer-subject-heading small { color: #8b9aaa; }
+html[data-theme="dark-glass"] .goal-composer-card { border-color: rgba(255, 255, 255, .18); background: rgba(18, 24, 34, .96); box-shadow: 0 24px 58px rgba(0, 0, 0, .48), inset 0 1px 0 rgba(255, 255, 255, .08); }
+html[data-theme="dark-glass"] .goal-composer-card h2 { color: #f3f6fb; }
+html[data-theme="dark-glass"] .goal-composer-intro, html[data-theme="dark-glass"] .goal-composer-card label { color: #9aa7b8; }
+html[data-theme="dark-glass"] .goal-composer-close { border-color: rgba(255, 255, 255, .15); background: rgba(255, 255, 255, .07); color: #aebccc; }
+html[data-theme="dark-glass"] .goal-composer-close:hover { background: rgba(255, 255, 255, .13); color: #fff; }
+html[data-theme="dark-glass"] .goal-composer-card input, html[data-theme="dark-glass"] .goal-composer-card textarea { border-color: rgba(255, 255, 255, .15); background: rgba(255, 255, 255, .06); color: #f3f6fb; }
+html[data-theme="dark-glass"] .goal-composer-subjects { border-color: rgba(255, 255, 255, .14); }
+html[data-theme="dark-glass"] .goal-composer-subject-heading { color: #c4cfdb; }
+html[data-theme="dark-glass"] .goal-composer-subject-heading small { color: #8b9aaa; }
 
 @media (max-width: 900px) {
   .goals-garden-hero { align-items: flex-start; flex-direction: column; }

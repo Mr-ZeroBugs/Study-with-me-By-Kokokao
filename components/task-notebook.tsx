@@ -1,12 +1,13 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { BookOpen, CalendarDays, Circle, Coffee, Droplets, Flower2, Heart, ListChecks, MessageCircle, Moon, NotebookPen, Plus, Sparkles, Trash2 } from 'lucide-react'
 import { getLocalDateKey } from '../lib/storage'
 import type { GoalStep, LifeGoal, PlannerData, PlannerEvent, PlannerEventType, PlannerTask, TaskPriority } from '../lib/planner-storage'
 import type { User } from '@supabase/supabase-js'
 import { LineConnectModal } from './line-connect-modal'
 import { AuthModal } from './auth-modal'
+import { supabase } from '../lib/supabase'
 
 const eventLabels: Record<PlannerEventType, string> = { competition: 'competition', project: 'project', exam: 'exam', important: 'important' }
 const NOTEBOOK_KEY = 'study_timer_task_notebook_v1'
@@ -99,6 +100,7 @@ export function TaskNotebook({
 }: TaskNotebookProps) {
   const [currentUser, setCurrentUser] = useState<User | null>(user ?? null)
   const [isLineModalOpen, setIsLineModalOpen] = useState(false)
+  const [isLineConnected, setIsLineConnected] = useState(false)
   const [isAuthOpen, setIsAuthOpen] = useState(false)
   const [rememberNote, setRememberNote] = useState('')
   const [pageNote, setPageNote] = useState('')
@@ -110,6 +112,27 @@ export function TaskNotebook({
   useEffect(() => {
     setCurrentUser(user ?? null)
   }, [user])
+
+  const refreshLineConnection = useCallback(async () => {
+    if (!currentUser) {
+      setIsLineConnected(false)
+      return
+    }
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session?.access_token) return
+    try {
+      const response = await fetch('/api/line/connect', { headers: { Authorization: `Bearer ${session.access_token}` } })
+      if (!response.ok) return
+      const status = await response.json() as { isConnected?: boolean }
+      setIsLineConnected(status.isConnected === true)
+    } catch {
+      // The button stays available when the connection status cannot be checked.
+    }
+  }, [currentUser])
+
+  useEffect(() => {
+    void refreshLineConnection()
+  }, [refreshLineConnection])
 
 
   useEffect(() => {
@@ -160,14 +183,14 @@ export function TaskNotebook({
         <div className="notebook-topline">
           <span>study with me · daily page</span>
           <div className="flex items-center gap-3">
-            <button
+            {!isLineConnected && <button
               type="button"
               onClick={() => setIsLineModalOpen(true)}
               className="inline-flex items-center gap-1.5 rounded-full border border-line bg-paper px-3 py-1 text-xs font-semibold text-ink hover:border-[#06C755] hover:text-[#06C755] transition shadow-2xs cursor-pointer"
             >
               <MessageCircle className="size-3.5 text-[#06C755]" />
               <span>📱 เชื่อมต่อ LINE Bot</span>
-            </button>
+            </button>}
             <span>✦ {openTasks.length} things on your mind</span>
           </div>
         </div>
@@ -288,6 +311,7 @@ export function TaskNotebook({
         onClose={() => setIsLineModalOpen(false)}
         user={currentUser}
         onOpenAuth={() => setIsAuthOpen(true)}
+        onConnectionChange={refreshLineConnection}
       />
 
       <AuthModal
@@ -299,4 +323,3 @@ export function TaskNotebook({
     </section>
   )
 }
-

@@ -52,6 +52,19 @@ type TimerMode = 'flow' | 'countdown'
 type Extension = 'pomodoro' | 'rule5217' | null
 
 const TIMER_SESSION_KEY = 'study_timer_session_v1'
+const POMODORO_LENGTH_OPTIONS = [15, 25, 30, 45, 50, 60]
+const POMODORO_REMINDER_OPTIONS = [15, 20, 25, 30, 45, 50, 60]
+const RULE_5217_FOCUS_MINUTES = 52
+
+function countdownLengthFor(mode: Mode, extension: Extension, pomodoroMinutes: number) {
+  if (extension === 'rule5217') return RULE_5217_FOCUS_MINUTES
+  if (extension === 'pomodoro') return pomodoroMinutes
+  return modes[mode].minutes
+}
+
+function reminderLengthFor(extension: Extension, pomodoroReminderMinutes: number) {
+  return extension === 'rule5217' ? RULE_5217_FOCUS_MINUTES : pomodoroReminderMinutes
+}
 
 type PersistedTimerSession = {
   version: 1
@@ -62,6 +75,7 @@ type PersistedTimerSession = {
   subject: string
   elapsedSeconds: number
   seconds: number
+  pomodoroMinutes: number
   reminderMinutes: number
   reminderSeconds: number
   savedAt: number
@@ -85,6 +99,7 @@ function readPersistedTimerSession(): PersistedTimerSession | null {
       subject: typeof parsed.subject === 'string' && parsed.subject.trim() ? parsed.subject.trim().slice(0, 40) : 'General',
       elapsedSeconds: Math.max(0, Math.floor(Number(parsed.elapsedSeconds) || 0)),
       seconds: Math.max(0, Math.floor(Number(parsed.seconds) || modes[parsed.mode].minutes * 60)),
+      pomodoroMinutes: POMODORO_LENGTH_OPTIONS.includes(Number(parsed.pomodoroMinutes)) ? Number(parsed.pomodoroMinutes) : 25,
       reminderMinutes: Math.max(1, Math.floor(Number(parsed.reminderMinutes) || 25)),
       reminderSeconds: Math.max(0, Math.floor(Number(parsed.reminderSeconds) || 25 * 60)),
       savedAt: parsed.savedAt,
@@ -142,6 +157,7 @@ function TimerPage() {
   const [seconds, setSeconds] = useState(25 * 60)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [running, setRunning] = useState(false)
+  const [pomodoroMinutes, setPomodoroMinutes] = useState(25)
   const [reminderMinutes, setReminderMinutes] = useState(25)
   const [reminderSeconds, setReminderSeconds] = useState(25 * 60)
   const [reminderReached, setReminderReached] = useState(false)
@@ -170,13 +186,14 @@ function TimerPage() {
   const baseSecondsRef = useRef<number>(25 * 60)
   const baseElapsedRef = useRef<number>(0)
   const baseReminderRef = useRef<number>(25 * 60)
+  const lastReminderCycleRef = useRef<number>(0)
   const lastMinuteSyncRef = useRef<number>(0)
   // Keep the interval effect stable while the timer is running. Re-running the
   // effect for unrelated UI updates (sound, auth, logs, etc.) used to create a
   // new start timestamp and could make open-ended focus appear to reset.
-  const timerOptionsRef = useRef({ running, timerMode, mode, extension, reminderMinutes, reminderSeconds, soundEnabled, user, selectedSubject, seconds, elapsedSeconds })
-  timerOptionsRef.current = { running, timerMode, mode, extension, reminderMinutes, reminderSeconds, soundEnabled, user, selectedSubject, seconds, elapsedSeconds }
-  const activeIntervalRef = useRef<{ startedAt: number; timerMode: TimerMode; mode: Mode; subject: string; user: User | null } | null>(null)
+  const timerOptionsRef = useRef({ running, timerMode, mode, extension, pomodoroMinutes, reminderMinutes, reminderSeconds, soundEnabled, user, selectedSubject, seconds, elapsedSeconds })
+  timerOptionsRef.current = { running, timerMode, mode, extension, pomodoroMinutes, reminderMinutes, reminderSeconds, soundEnabled, user, selectedSubject, seconds, elapsedSeconds }
+  const activeIntervalRef = useRef<{ startedAt: number; timerMode: TimerMode; mode: Mode; subject: string; user: User | null; plannedMinutes: number } | null>(null)
   const restoredActiveStartedAtRef = useRef<number | null>(null)
   const restoredLastMinuteSyncRef = useRef<number | null>(null)
   const timerRestoredRef = useRef(false)
@@ -192,6 +209,7 @@ function TimerPage() {
       subject: current.selectedSubject,
       elapsedSeconds: current.elapsedSeconds,
       seconds: current.seconds,
+      pomodoroMinutes: current.pomodoroMinutes,
       reminderMinutes: current.reminderMinutes,
       reminderSeconds: current.reminderSeconds,
       activeStartedAt: current.running ? activeIntervalRef.current?.startedAt ?? Date.now() : null,
@@ -271,13 +289,15 @@ function TimerPage() {
         : persisted.seconds
       const shouldResume = persisted.running && (persisted.timerMode === 'flow' || nextCountdown > 0)
 
+      const restoredMode = persisted.extension ? 'focus' : persisted.mode
       setTimerMode(persisted.timerMode)
-      setMode(persisted.mode)
+      setMode(restoredMode)
       setExtension(persisted.extension)
+      setPomodoroMinutes(persisted.pomodoroMinutes)
       setSelectedSubject(persisted.subject)
       setSubjects((previous) => Array.from(new Set([...previous, persisted.subject])))
       setElapsedSeconds(nextElapsed)
-      setSeconds(nextCountdown > 0 ? nextCountdown : modes[persisted.mode].minutes * 60)
+      setSeconds(nextCountdown > 0 ? nextCountdown : countdownLengthFor(restoredMode, persisted.extension, persisted.pomodoroMinutes) * 60)
       setReminderMinutes(persisted.reminderMinutes)
       setReminderSeconds(persisted.reminderSeconds)
       if (shouldResume) {
@@ -328,6 +348,7 @@ function TimerPage() {
     baseElapsedRef.current = options.elapsedSeconds
     baseReminderRef.current = options.reminderSeconds
     lastMinuteSyncRef.current = restoredLastMinuteSyncRef.current ?? options.elapsedSeconds
+    lastReminderCycleRef.current = Math.floor(options.elapsedSeconds / (reminderLengthFor(options.extension, options.reminderMinutes) * 60))
     restoredLastMinuteSyncRef.current = null
     activeIntervalRef.current = {
       startedAt,
@@ -335,6 +356,7 @@ function TimerPage() {
       mode: options.mode,
       subject: options.selectedSubject,
       user: options.user,
+      plannedMinutes: options.timerMode === 'countdown' ? Math.max(1, Math.round(options.seconds / 60)) : 0,
     }
 
     const interval = window.setInterval(() => {
@@ -360,14 +382,19 @@ function TimerPage() {
 
         // Extension reminder countdown
         if (currentOptions.extension) {
-          const currentReminder = baseReminderRef.current - (elapsedWallClock % (currentOptions.reminderMinutes * 60))
-          if (currentReminder <= 0) {
+          const reminderMinutes = reminderLengthFor(currentOptions.extension, currentOptions.reminderMinutes)
+          const reminderSeconds = reminderMinutes * 60
+          const remainder = currentElapsed % reminderSeconds
+          const reminderCycle = Math.floor(currentElapsed / reminderSeconds)
+          const reminderReachedNow = currentElapsed > 0 && remainder === 0 && reminderCycle > lastReminderCycleRef.current
+          if (reminderReachedNow) {
+            lastReminderCycleRef.current = reminderCycle
             setReminderReached(true)
             if (currentOptions.soundEnabled) soundEngine.playFocusComplete()
-            baseReminderRef.current = currentOptions.reminderMinutes * 60
-            setReminderSeconds(currentOptions.reminderMinutes * 60)
+            baseReminderRef.current = reminderMinutes * 60
+            setReminderSeconds(reminderMinutes * 60)
           } else {
-            setReminderSeconds(currentReminder)
+            setReminderSeconds(remainder === 0 ? reminderSeconds : reminderSeconds - remainder)
           }
         }
       } else {
@@ -376,9 +403,9 @@ function TimerPage() {
         if (remaining <= 0) {
           finishActiveInterval()
           setRunning(false)
-          setSeconds(modes[activeInterval.mode].minutes * 60)
+          setSeconds(countdownLengthFor(activeInterval.mode, currentOptions.extension, currentOptions.pomodoroMinutes) * 60)
           if (activeInterval.mode === 'focus') {
-            void handleFocusCompletedRef.current(modes.focus.minutes)
+            void handleFocusCompletedRef.current(activeInterval.plannedMinutes)
           } else {
             if (currentOptions.soundEnabled) soundEngine.playBreakComplete()
           }
@@ -399,7 +426,7 @@ function TimerPage() {
     if (!running) return
     const persistenceInterval = window.setInterval(persistCurrentTimer, 1000)
     return () => window.clearInterval(persistenceInterval)
-  }, [timerRestored, running, timerMode, mode, extension, reminderMinutes, selectedSubject, persistCurrentTimer])
+  }, [timerRestored, running, timerMode, mode, extension, pomodoroMinutes, reminderMinutes, selectedSubject, persistCurrentTimer])
 
   // Timer Controls
   const togglePlay = () => {
@@ -411,9 +438,11 @@ function TimerPage() {
   const selectMode = (nextMode: Mode) => {
     if (soundEnabled) soundEngine.playSoftClick()
     finishActiveInterval()
-    setMode(nextMode)
-    setSeconds(modes[nextMode].minutes * 60)
-    baseSecondsRef.current = modes[nextMode].minutes * 60
+    const effectiveMode = extension ? 'focus' : nextMode
+    const nextLength = countdownLengthFor(effectiveMode, extension, pomodoroMinutes)
+    setMode(effectiveMode)
+    setSeconds(nextLength * 60)
+    baseSecondsRef.current = nextLength * 60
     setRunning(false)
   }
 
@@ -422,11 +451,14 @@ function TimerPage() {
     finishActiveInterval()
     setTimerMode(nextMode)
     setRunning(false)
-    setSeconds(modes[mode].minutes * 60)
-    baseSecondsRef.current = modes[mode].minutes * 60
+    const nextLength = countdownLengthFor(mode, extension, pomodoroMinutes)
+    setSeconds(nextLength * 60)
+    baseSecondsRef.current = nextLength * 60
     setElapsedSeconds(0)
     baseElapsedRef.current = 0
-    setReminderSeconds(reminderMinutes * 60)
+    const reminderLength = reminderLengthFor(extension, reminderMinutes)
+    setReminderSeconds(reminderLength * 60)
+    baseReminderRef.current = reminderLength * 60
     setReminderReached(false)
   }
 
@@ -434,26 +466,48 @@ function TimerPage() {
     if (soundEnabled) soundEngine.playSoftClick()
     finishActiveInterval()
     const enabled = extension === nextExtension ? null : nextExtension
-    const interval = nextExtension === 'pomodoro' ? 25 : 52
     setExtension(enabled)
-    setReminderMinutes(enabled ? interval : 25)
+    if (enabled) setMode('focus')
     setRunning(false)
-    setReminderSeconds((enabled ? interval : 25) * 60)
-    baseReminderRef.current = (enabled ? interval : 25) * 60
+    const reminderLength = reminderLengthFor(enabled, reminderMinutes)
+    setReminderSeconds(reminderLength * 60)
+    baseReminderRef.current = reminderLength * 60
+    const nextLength = countdownLengthFor(enabled ? 'focus' : mode, enabled, pomodoroMinutes)
+    setSeconds(nextLength * 60)
+    baseSecondsRef.current = nextLength * 60
     setReminderReached(false)
   }
 
   const reset = () => {
     if (soundEnabled) soundEngine.playSoftClick()
     finishActiveInterval()
-    setSeconds(modes[mode].minutes * 60)
-    baseSecondsRef.current = modes[mode].minutes * 60
+    const countdownLength = countdownLengthFor(mode, extension, pomodoroMinutes)
+    setSeconds(countdownLength * 60)
+    baseSecondsRef.current = countdownLength * 60
     setElapsedSeconds(0)
     baseElapsedRef.current = 0
-    setReminderSeconds(reminderMinutes * 60)
-    baseReminderRef.current = reminderMinutes * 60
+    const reminderLength = reminderLengthFor(extension, reminderMinutes)
+    setReminderSeconds(reminderLength * 60)
+    baseReminderRef.current = reminderLength * 60
     setReminderReached(false)
     setRunning(false)
+  }
+
+  const selectPomodoroMinutes = (nextMinutes: number) => {
+    setPomodoroMinutes(nextMinutes)
+    if (!running && timerMode === 'countdown' && extension === 'pomodoro') {
+      setSeconds(nextMinutes * 60)
+      baseSecondsRef.current = nextMinutes * 60
+    }
+  }
+
+  const selectPomodoroReminder = (nextMinutes: number) => {
+    setReminderMinutes(nextMinutes)
+    if (!running) {
+      setReminderSeconds(nextMinutes * 60)
+      baseReminderRef.current = nextMinutes * 60
+      setReminderReached(false)
+    }
   }
 
   const selectSubject = (nextSubject: string) => {
@@ -601,16 +655,7 @@ function TimerPage() {
             {/* Countdown Length Selection */}
             {timerMode === 'countdown' && (
               <div className="mx-auto mt-3 flex max-w-md items-center justify-center gap-2">
-                <span className="text-xs text-muted-ink">length:</span>
-                {(Object.keys(modes) as Mode[]).map((item) => (
-                  <button
-                    key={item}
-                    onClick={() => selectMode(item)}
-                    className={`mode-button ${mode === item ? 'active' : ''}`}
-                  >
-                    {item === 'focus' ? '25 min' : item === 'short' ? '5 min' : '15 min'}
-                  </button>
-                ))}
+                {extension === 'pomodoro' ? <><span className="text-xs text-muted-ink">focus length:</span><select aria-label="Pomodoro focus length" value={pomodoroMinutes} disabled={running} onChange={(event) => selectPomodoroMinutes(Number(event.target.value))} className="rounded-full border border-line bg-paper px-2 py-1 font-semibold text-ink">{POMODORO_LENGTH_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{minutes} min</option>)}</select></> : extension === 'rule5217' ? <><span className="text-xs text-muted-ink">52 / 17 focus length:</span><strong className="text-xs text-ink">52 min</strong></> : <><span className="text-xs text-muted-ink">length:</span>{(Object.keys(modes) as Mode[]).map((item) => (<button key={item} onClick={() => selectMode(item)} className={`mode-button ${mode === item ? 'active' : ''}`}>{item === 'focus' ? '25 min' : item === 'short' ? '5 min' : '15 min'}</button>))}</>}
               </div>
             )}
 
@@ -625,7 +670,7 @@ function TimerPage() {
                   onClick={() => selectExtension('pomodoro')}
                   className={`mode-button ${extension === 'pomodoro' ? 'active' : ''}`}
                 >
-                  Pomodoro (25m)
+                  Pomodoro
                 </button>
                 <button
                   onClick={() => selectExtension('rule5217')}
@@ -643,26 +688,8 @@ function TimerPage() {
             {timerMode === 'flow' && extension && (
               <div className="mt-4 flex flex-col items-center justify-center gap-2 text-xs text-muted-ink">
                 <div className="flex items-center gap-2">
-                  <span>{extension === 'pomodoro' ? 'gentle reminder every' : 'focus reminder every'}</span>
-                  <select
-                    aria-label="Reminder interval"
-                    value={reminderMinutes}
-                    onChange={(event) => {
-                      const value = Number(event.target.value)
-                      setReminderMinutes(value)
-                      setReminderSeconds(value * 60)
-                      baseReminderRef.current = value * 60
-                      setReminderReached(false)
-                    }}
-                    className="rounded-full border border-line bg-paper px-2 py-1 font-semibold text-ink"
-                  >
-                    <option value={extension === 'pomodoro' ? 25 : 52}>
-                      {extension === 'pomodoro' ? '25 min' : '52 min'}
-                    </option>
-                    <option value={extension === 'pomodoro' ? 50 : 17}>
-                      {extension === 'pomodoro' ? '50 min' : '17 min'}
-                    </option>
-                  </select>
+                  <span>{extension === 'pomodoro' ? 'gentle reminder every' : 'fixed focus reminder every'}</span>
+                  {extension === 'pomodoro' ? <select aria-label="Pomodoro reminder interval" value={reminderMinutes} disabled={running} onChange={(event) => selectPomodoroReminder(Number(event.target.value))} className="rounded-full border border-line bg-paper px-2 py-1 font-semibold text-ink">{POMODORO_REMINDER_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{minutes} min</option>)}</select> : <strong className="text-ink">52 min</strong>}
                 </div>
                 {reminderReached && (
                   <button className="tip-button" onClick={() => setReminderReached(false)}>

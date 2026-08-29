@@ -137,8 +137,6 @@ export function GoalsGarden({ user, subjects }: { user: User | null; subjects: s
     for (let index = 0; index < shelfSlots; index += 1) if (!goalBySlot.has(index)) return index
     return shelfSlots
   }, [goalBySlot, shelfSlots])
-  const wateredTodayCount = useMemo(() => data.goals.filter((goal) => subjectMinutes(subjectLogs, goal.subjects ?? [], [todayKey]) > 0).length, [data.goals, subjectLogs, todayKey])
-  const totalStudyMinutes = useMemo(() => Object.values(subjectLogs).reduce((total, days) => total + Object.values(days).reduce((sum, minutes) => sum + minutes, 0), 0), [subjectLogs])
   const selectedGoal = useMemo(() => data.goals.find((goal) => goal.id === selectedGoalId) ?? null, [data.goals, selectedGoalId])
   const selectedGoalStats = useMemo(() => selectedGoal ? goalProgress(selectedGoal, data.steps) : null, [selectedGoal, data.steps])
   const selectedGoalTotalMinutes = useMemo(() => selectedGoal ? subjectMinutes(subjectLogs, selectedGoal.subjects ?? []) : 0, [selectedGoal, subjectLogs])
@@ -235,26 +233,8 @@ export function GoalsGarden({ user, subjects }: { user: User | null; subjects: s
     <>
     <main className="goals-garden-page min-h-screen overflow-hidden px-4 py-7 pb-28 text-ink sm:px-8 lg:px-12">
       <div className="goals-garden-shell">
-        <header className="goals-garden-hero paper-card">
-          <div>
-            <p className="eyebrow">your little growing space</p>
-            <h1 className="font-display">grow what matters<span>.</span></h1>
-            <p>Plant a goal, link the subjects that move it forward, and water it with a little focus every day.</p>
-          </div>
-          <div className="goals-garden-summary" aria-label="Garden summary">
-            <span><strong>{data.goals.length}</strong> planted</span>
-            <span><strong>{wateredTodayCount}</strong> watered today</span>
-            <span><strong>{formatMinutes(totalStudyMinutes)}</strong> all-time focus</span>
-          </div>
-        </header>
-
-        <section className="goals-garden-toolbar" aria-label="Goal actions">
-          <div><Sprout className="size-4" /><span>Every linked subject becomes a watering path for that goal.</span></div>
-          <button type="button" className="garden-add-button" onClick={() => openComposer()}><Plus className="size-4" /> plant a goal</button>
-        </section>
-
         <section className="goal-shelf-scene" aria-labelledby="goal-shelf-heading">
-          <div className="goal-shelf-label"><p className="eyebrow">the goal garden</p><h2 id="goal-shelf-heading">your shelf of becoming</h2></div>
+          <div className="goal-shelf-label"><div><p className="eyebrow">the goal garden</p><h2 id="goal-shelf-heading">your shelf of becoming</h2></div><button type="button" className="garden-add-button" onClick={() => openComposer()}><Plus className="size-4" /> plant a goal</button></div>
           <div className="goal-shelf-rows">
             {Array.from({ length: shelfCount }, (_, rowIndex) => (
               <div className="goal-shelf-row" key={`shelf-${rowIndex}`}>

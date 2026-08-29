@@ -24,9 +24,10 @@ interface LineConnectModalProps {
   onClose: () => void
   user: User | null
   onOpenAuth: () => void
+  onConnectionChange?: () => void
 }
 
-export function LineConnectModal({ isOpen, onClose, user, onOpenAuth }: LineConnectModalProps) {
+export function LineConnectModal({ isOpen, onClose, user, onOpenAuth, onConnectionChange }: LineConnectModalProps) {
   const [mounted, setMounted] = useState(false)
   const [loading, setLoading] = useState(false)
   const [isConnected, setIsConnected] = useState(false)
@@ -79,6 +80,7 @@ export function LineConnectModal({ isOpen, onClose, user, onOpenAuth }: LineConn
       const data = await res.json()
       if (res.ok) {
         setIsConnected(data.isConnected)
+        onConnectionChange?.()
         if (data.activeCode) {
           setLinkCode(data.activeCode)
         }
@@ -128,6 +130,7 @@ export function LineConnectModal({ isOpen, onClose, user, onOpenAuth }: LineConn
       if (res.ok) {
         setIsConnected(false)
         setLinkCode(null)
+        onConnectionChange?.()
       }
     } catch (err: any) {
       setError(err.message)
