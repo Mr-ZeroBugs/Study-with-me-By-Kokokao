@@ -654,8 +654,8 @@ function TimerPage() {
 
             {/* Countdown Length Selection */}
             {timerMode === 'countdown' && (
-              <div className="mx-auto mt-3 flex max-w-md items-center justify-center gap-2">
-                {extension === 'pomodoro' ? <><span className="text-xs text-muted-ink">focus length:</span><select aria-label="Pomodoro focus length" value={pomodoroMinutes} disabled={running} onChange={(event) => selectPomodoroMinutes(Number(event.target.value))} className="rounded-full border border-line bg-paper px-2 py-1 font-semibold text-ink">{POMODORO_LENGTH_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{minutes} min</option>)}</select></> : extension === 'rule5217' ? <><span className="text-xs text-muted-ink">52 / 17 focus length:</span><strong className="text-xs text-ink">52 min</strong></> : <><span className="text-xs text-muted-ink">length:</span>{(Object.keys(modes) as Mode[]).map((item) => (<button key={item} onClick={() => selectMode(item)} className={`mode-button ${mode === item ? 'active' : ''}`}>{item === 'focus' ? '25 min' : item === 'short' ? '5 min' : '15 min'}</button>))}</>}
+              <div className="extension-control-row mt-3">
+                {extension === 'pomodoro' ? <><span>focus length:</span><select aria-label="Pomodoro focus length" value={pomodoroMinutes} disabled={running} onChange={(event) => selectPomodoroMinutes(Number(event.target.value))} className="extension-control-value">{POMODORO_LENGTH_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{minutes} min</option>)}</select></> : extension === 'rule5217' ? <><span>52 / 17 focus length:</span><strong className="extension-control-value">52 min</strong></> : <><span>length:</span><div className="flex flex-wrap justify-end gap-2">{(Object.keys(modes) as Mode[]).map((item) => (<button key={item} onClick={() => selectMode(item)} className={`mode-button ${mode === item ? 'active' : ''}`}>{item === 'focus' ? '25 min' : item === 'short' ? '5 min' : '15 min'}</button>))}</div></>}
               </div>
             )}
 
@@ -686,13 +686,11 @@ function TimerPage() {
 
             {/* Active Extension Info */}
             {timerMode === 'flow' && extension && (
-              <div className="mt-4 flex flex-col items-center justify-center gap-2 text-xs text-muted-ink">
-                <div className="flex items-center gap-2">
-                  <span>{extension === 'pomodoro' ? 'gentle reminder every' : 'fixed focus reminder every'}</span>
-                  {extension === 'pomodoro' ? <select aria-label="Pomodoro reminder interval" value={reminderMinutes} disabled={running} onChange={(event) => selectPomodoroReminder(Number(event.target.value))} className="rounded-full border border-line bg-paper px-2 py-1 font-semibold text-ink">{POMODORO_REMINDER_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{minutes} min</option>)}</select> : <strong className="text-ink">52 min</strong>}
-                </div>
+              <div className="extension-control-row mt-4">
+                <span>{extension === 'pomodoro' ? 'gentle reminder every' : 'focus reminder every'}</span>
+                {extension === 'pomodoro' ? <select aria-label="Pomodoro reminder interval" value={reminderMinutes} disabled={running} onChange={(event) => selectPomodoroReminder(Number(event.target.value))} className="extension-control-value">{POMODORO_REMINDER_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{minutes} min</option>)}</select> : <strong className="extension-control-value">52 min</strong>}
                 {reminderReached && (
-                  <button className="tip-button" onClick={() => setReminderReached(false)}>
+                  <button className="tip-button extension-break-button" onClick={() => setReminderReached(false)}>
                     <Coffee className="size-4" /> time for a tiny break
                   </button>
                 )}
