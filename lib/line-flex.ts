@@ -225,7 +225,7 @@ const doneButton = (task: Record<string, unknown>): Fc => {
 }
 
 const sharedTaskNotice = (): Fc =>
-  t('งานทีม · ทำเสร็จในเว็บ', { size: 'xxs', color: g.iris, wrap: true, maxLines: 2, align: 'center', adjustMode: 'shrink-to-fit' })
+  t('งานทีม', { size: 'xxs', color: g.iris, wrap: true, maxLines: 1, align: 'center', adjustMode: 'shrink-to-fit' })
 
 const footerBar = (...buttons: Fc[]): Fc => ({
   type: 'box',
