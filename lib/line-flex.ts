@@ -65,7 +65,7 @@ type KokoMood = 'alert' | 'sleep' | 'study' | 'love' | 'happy' | 'angry' | 'sad'
 const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL || ''
 const kokoBaseUrl = /^https:\/\//i.test(configuredAppUrl)
   ? configuredAppUrl.replace(/\/$/, '')
-  : 'https://study-with-me-by-kokokao.vercel.app'
+  : 'https://koko-study.vercel.app'
 
 const kokoImage = (mood: KokoMood, size = 'xxl'): Fc => ({
   type: 'image',

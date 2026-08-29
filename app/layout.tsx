@@ -4,30 +4,35 @@ import './globals.css'
 import { BottomNav } from '../components/bottom-nav'
 import { SettingsFloatingButton } from '../components/settings-floating-button'
 
+const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://koko-study.vercel.app'
+const appUrl = /^https?:\/\//i.test(configuredAppUrl)
+  ? configuredAppUrl.replace(/\/$/, '')
+  : 'https://koko-study.vercel.app'
+
 export const metadata: Metadata = {
-  metadataBase: new URL('https://study-with-me-by-kokokao.vercel.app'),
-  title: 'study with me · focus softly',
-  description: 'A cozy little timer for focused study sessions, gentle breaks, and tiny progress.',
+  metadataBase: new URL(appUrl),
+  title: 'Koko.study',
+  description: 'A cozy study manager for focused sessions, plans, and progress.',
   applicationName: 'Koko.study',
   openGraph: {
     type: 'website',
-    url: 'https://study-with-me-by-kokokao.vercel.app',
+    url: appUrl,
     siteName: 'Koko.study',
-    title: 'Koko.study · focus softly',
-    description: 'A cozy little timer for focused study sessions, gentle breaks, and tiny progress.',
+    title: 'Koko.study',
+    description: 'A cozy study manager for focused sessions, plans, and progress.',
     images: [
       {
         url: '/koko-study-cover.png',
         width: 1254,
         height: 1254,
-        alt: 'Koko.study mascot — focus softly and grow a little every day',
+        alt: 'Koko.study study manager mascot',
       },
     ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Koko.study · focus softly',
-    description: 'A cozy little timer for focused study sessions, gentle breaks, and tiny progress.',
+    title: 'Koko.study',
+    description: 'A cozy study manager for focused sessions, plans, and progress.',
     images: ['/koko-study-cover.png'],
   },
   icons: {
