@@ -12,6 +12,15 @@ type NaturalTeamTaskRequest = {
   taskInput: string
 }
 
+const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://koko-study.vercel.app'
+const appUrl = /^https?:\/\//i.test(configuredAppUrl) ? configuredAppUrl.replace(/\/$/, '') : 'https://koko-study.vercel.app'
+
+function isWebsiteLinkRequest(text: string) {
+  return /^\/(?:web|website|site|link)$/i.test(text)
+    || /(?:ขอ|ส่ง|เปิด|เข้า).*(?:เว็บ|เว็บไซต์|website|site)/i.test(text)
+    || /(?:เว็บ|เว็บไซต์|website|site).*(?:ลิงก์|ลิ้ง|link)/i.test(text)
+}
+
 function parseNaturalTeamTaskRequest(text: string, context: LineWorkspaceContext): NaturalTeamTaskRequest | null {
   const prefix = text.match(/^(?:เพิ่มงานทีม|สร้างงานทีม|add\s+(?:a\s+)?team\s+task)\s*(?:(?:ใน|เข้า|in|into)\s*)?/i)
   if (!prefix) return null
@@ -184,6 +193,21 @@ export async function POST(request: Request) {
           continue
         }
 
+        // Website shortcut works even before a LINE account is linked.
+        if (isWebsiteLinkRequest(text)) {
+          await sendLineReply(replyToken, [{
+            type: 'text',
+            text: `นี่คือลิงก์เว็บไซต์ Study Manager.koko ครับ ✨\n${appUrl}`,
+            quickReply: {
+              items: [
+                { type: 'action', action: { type: 'uri', label: 'เปิดเว็บไซต์', uri: appUrl } },
+                { type: 'action', action: { type: 'message', label: 'วิธีใช้งาน', text: '/help' } },
+              ],
+            },
+          }])
+          continue
+        }
+
         // 2. Check if this LINE user is linked to an account
         const { data: userConn } = await admin
           .from('user_line_connections')
@@ -219,6 +243,7 @@ export async function POST(request: Request) {
                 `• /todo <ชื่องาน> [วิชา] วันนี้/พรุ่งนี้ !1/!2/!3\n` +
                 `• /team <หมายเลข> <ชื่องาน> เพิ่มงานเข้า Team Space\n` +
                 `• เพิ่มงานทีมใน<ชื่อ Team Space> <ชื่องาน>\n` +
+                `• /web (ขอลิงก์เว็บไซต์)\n` +
                 `• /event <วันสำคัญ> [exam/project/competition/important]\n` +
                 `• /list (ดู To-Do)\n` +
                 `• /events (ดูวันสำคัญ)\n` +
