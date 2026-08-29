@@ -4,7 +4,38 @@ import { createEventsFlex, createStatusFlex, createTaskDoneFlex, createTasksFlex
 import { analyzeUserMessageWithGemini } from '@/lib/gemini'
 import { getSupabaseAdmin } from '@/lib/supabase-admin'
 import { decorateLineWorkspaceRow, loadLineWorkspaceContext } from '@/lib/line-workspaces'
+import type { LineWorkspaceContext } from '@/lib/line-workspaces'
 import crypto from 'crypto'
+
+type NaturalTeamTaskRequest = {
+  targetIndex: number | null
+  taskInput: string
+}
+
+function parseNaturalTeamTaskRequest(text: string, context: LineWorkspaceContext): NaturalTeamTaskRequest | null {
+  const prefix = text.match(/^(?:เพิ่มงานทีม|สร้างงานทีม|add\s+(?:a\s+)?team\s+task)\s*(?:(?:ใน|เข้า|in|into)\s*)?/i)
+  if (!prefix) return null
+
+  let remainder = text.slice(prefix[0].length).trim()
+  const candidates = context.ids
+    .map((id, index) => ({ id, index, name: context.names[id] || '' }))
+    .filter((candidate) => candidate.name)
+    .sort((a, b) => b.name.length - a.name.length)
+  const normalizedRemainder = remainder.toLocaleLowerCase()
+  const matchedWorkspace = candidates.find((candidate) => {
+    const normalizedName = candidate.name.toLocaleLowerCase()
+    return normalizedRemainder === normalizedName || normalizedRemainder.startsWith(normalizedName + ' ') || normalizedRemainder.startsWith(normalizedName + ':') || normalizedRemainder.startsWith(normalizedName + '：')
+  })
+
+  if (matchedWorkspace) {
+    remainder = remainder.slice(matchedWorkspace.name.length).replace(/^\s*(?:ให้|[:：,\-–—])\s*/i, '').trim()
+    return { targetIndex: matchedWorkspace.index, taskInput: remainder }
+  }
+
+  // With one space, the user does not need to repeat its name. With several,
+  // the caller will show a numbered picker instead of guessing.
+  return { targetIndex: context.ids.length === 1 ? 0 : null, taskInput: remainder }
+}
 
 export async function POST(request: Request) {
   try {
@@ -186,6 +217,8 @@ export async function POST(request: Request) {
                 `• "มีงานอะไรต้องทำบ้าง"\n\n` +
                 `📌 หรือใช้คำสั่งลัด:\n` +
                 `• /todo <ชื่องาน> [วิชา] วันนี้/พรุ่งนี้ !1/!2/!3\n` +
+                `• /team <หมายเลข> <ชื่องาน> เพิ่มงานเข้า Team Space\n` +
+                `• เพิ่มงานทีมใน<ชื่อ Team Space> <ชื่องาน>\n` +
                 `• /event <วันสำคัญ> [exam/project/competition/important]\n` +
                 `• /list (ดู To-Do)\n` +
                 `• /events (ดูวันสำคัญ)\n` +
@@ -209,6 +242,81 @@ export async function POST(request: Request) {
               },
             },
           ])
+          continue
+        }
+
+        // Add a task directly to a shared Team Space. A number keeps the
+        // command unambiguous when a user belongs to more than one space;
+        // natural Thai/English phrasing can resolve a workspace by its name.
+        const teamCommand = text.match(/^\/team(?:\s+(\d+))?\s*(.*)$/i)
+        const naturalTeamRequest = teamCommand ? null : parseNaturalTeamTaskRequest(text, workspaceContext)
+        if (teamCommand || naturalTeamRequest) {
+          if (!workspaceContext.ids.length) {
+            await sendLineReply(replyToken, [{ type: 'text', text: 'ตอนนี้คุณยังไม่มี Team Space ครับ สร้างหรือเข้าร่วม workspace จากหน้า Planner ก่อน แล้วค่อยลอง /team ใหม่ได้เลย' }])
+            continue
+          }
+
+          const requestedIndex = teamCommand
+            ? (teamCommand[1] ? Number(teamCommand[1]) - 1 : null)
+            : (naturalTeamRequest?.targetIndex ?? null)
+          const taskInput = teamCommand ? teamCommand[2].trim() : (naturalTeamRequest?.taskInput ?? '')
+          if (requestedIndex === null && workspaceContext.ids.length > 1) {
+            const spaces = workspaceContext.ids.map((id, index) => `${index + 1}. ${workspaceContext.names[id] || 'Team Space'}`).join('\n')
+            const quickReplyItems = workspaceContext.ids.slice(0, 13).map((id, index) => ({
+              type: 'action' as const,
+              action: { type: 'message' as const, label: String(index + 1) + '. ' + (workspaceContext.names[id] || 'Team Space').slice(0, 16), text: `/team ${index + 1} ` },
+            }))
+            await sendLineReply(replyToken, [{
+              type: 'text',
+              text: `เลือก Team Space ที่จะใส่งานก่อนครับ:\n${spaces}\n\nตัวอย่าง: /team 1 ทำสไลด์ส่งพรุ่งนี้ !3`,
+              quickReply: { items: quickReplyItems },
+            }])
+            continue
+          }
+
+          const targetIndex = requestedIndex ?? 0
+          if (targetIndex < 0 || targetIndex >= workspaceContext.ids.length) {
+            await sendLineReply(replyToken, [{ type: 'text', text: `ไม่พบ Team Space หมายเลข ${targetIndex + 1} ครับ ลองพิมพ์ /team เพื่อดูรายการอีกครั้ง` }])
+            continue
+          }
+          if (!taskInput) {
+            await sendLineReply(replyToken, [{ type: 'text', text: `พิมพ์รายละเอียดงานต่อท้ายได้เลยครับ เช่น /team ${targetIndex + 1} อ่านบทที่ 3 พรุ่งนี้ [Math] !2` }])
+            continue
+          }
+
+          const parsed = parseTaskInput(taskInput)
+          const teamTaskId = crypto.randomUUID()
+          const targetWorkspaceId = workspaceContext.ids[targetIndex]
+          const targetWorkspaceName = workspaceContext.names[targetWorkspaceId] || 'Team Space'
+          const { error: teamInsertError } = await admin.from('planner_tasks').insert({
+            id: teamTaskId,
+            user_id: userId,
+            workspace_id: targetWorkspaceId,
+            title: parsed.title,
+            subject: parsed.subject,
+            due_date: parsed.dueDate || null,
+            estimated_minutes: parsed.estimatedMinutes,
+            priority: parsed.priority,
+            completed: false,
+            created_at: new Date().toISOString(),
+          })
+
+          if (teamInsertError) {
+            console.error('Failed to create LINE team task:', teamInsertError)
+            await sendLineReply(replyToken, [{ type: 'text', text: 'เพิ่มงานเข้า Team Space ไม่สำเร็จครับ ลองใหม่อีกครั้งนะ' }])
+            continue
+          }
+
+          await sendLineReply(replyToken, [{
+            type: 'text',
+            text: `✅ เพิ่มงานเข้า Team Space แล้ว\n\n🏠 ${targetWorkspaceName}\n📌 งาน: ${parsed.title}\n📅 กำหนด: ${parsed.dueDate || 'ไม่ระบุ'}\n⚡ Priority: ${parsed.priority}`,
+            quickReply: {
+              items: [
+                { type: 'action', action: { type: 'message', label: '📋 ดูงานทีม', text: '/list' } },
+                { type: 'action', action: { type: 'message', label: '➕ เพิ่มอีกงาน', text: `/team ${targetIndex + 1} ` } },
+              ],
+            },
+          }])
           continue
         }
 
