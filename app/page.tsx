@@ -652,13 +652,6 @@ function TimerPage() {
               </button>
             </div>
 
-            {/* Countdown Length Selection */}
-            {timerMode === 'countdown' && (
-              <div className="extension-control-row mt-3">
-                {extension === 'pomodoro' ? <><span>focus length:</span><select aria-label="Pomodoro focus length" value={pomodoroMinutes} disabled={running} onChange={(event) => selectPomodoroMinutes(Number(event.target.value))} className="extension-control-value">{POMODORO_LENGTH_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{minutes} min</option>)}</select></> : extension === 'rule5217' ? <><span>52 / 17 focus length:</span><strong className="extension-control-value">52 min</strong></> : <><span>length:</span><div className="flex flex-wrap justify-end gap-2">{(Object.keys(modes) as Mode[]).map((item) => (<button key={item} onClick={() => selectMode(item)} className={`mode-button ${mode === item ? 'active' : ''}`}>{item === 'focus' ? '25 min' : item === 'short' ? '5 min' : '15 min'}</button>))}</div></>}
-              </div>
-            )}
-
             {/* Flow Mode Extensions */}
             <div className="mt-5 rounded-2xl border border-dashed border-line bg-paper/60 p-3">
               <div className="mb-2 flex items-center justify-between">
@@ -683,6 +676,13 @@ function TimerPage() {
                 Choose an extension only when you want structured focus and break reminders.
               </p>
             </div>
+
+            {/* Countdown Length Selection */}
+            {timerMode === 'countdown' && (
+              <div className="extension-control-row mt-4">
+                {extension === 'pomodoro' ? <><span>focus length:</span><select aria-label="Pomodoro focus length" value={pomodoroMinutes} disabled={running} onChange={(event) => selectPomodoroMinutes(Number(event.target.value))} className="extension-control-value">{POMODORO_LENGTH_OPTIONS.map((minutes) => <option key={minutes} value={minutes}>{minutes} min</option>)}</select></> : extension === 'rule5217' ? <><span>52 / 17 focus length:</span><strong className="extension-control-value">52 min</strong></> : <><span>length:</span><div className="flex flex-wrap justify-end gap-2">{(Object.keys(modes) as Mode[]).map((item) => (<button key={item} onClick={() => selectMode(item)} className={`mode-button ${mode === item ? 'active' : ''}`}>{item === 'focus' ? '25 min' : item === 'short' ? '5 min' : '15 min'}</button>))}</div></>}
+              </div>
+            )}
 
             {/* Active Extension Info */}
             {timerMode === 'flow' && extension && (
