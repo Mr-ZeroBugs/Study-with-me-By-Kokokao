@@ -779,7 +779,7 @@ html[data-theme="dark-glass"] .stats-range-tabs {
 
 /* Backdrop */
 .settings-backdrop {
-  position: fixed; inset: 0; z-index: 50;
+  position: fixed; inset: 0; z-index: 100;
   display: flex; align-items: center; justify-content: center; padding: 16px;
   background: rgba(73, 61, 58, 0.42);
   backdrop-filter: blur(4px);
@@ -807,6 +807,7 @@ html[data-theme="dark-glass"] .stats-range-tabs {
 .settings-modal-title-row { display: flex; align-items: center; gap: 12px; }
 .settings-modal-star { font-size: 26px; color: #f3c94f; transform: rotate(12deg); }
 .settings-modal-h2 { margin: 0; font-family: var(--font-display); font-size: 22px; color: #4b3329; letter-spacing: -.02em; }
+.settings-modal-subtitle { margin: 4px 0 0; color: var(--muted-ink); font-size: 10px; line-height: 1.4; }
 .settings-close-btn {
   display: grid; place-items: center;
   width: 32px; height: 32px;
@@ -843,6 +844,10 @@ html[data-theme="dark-glass"] .stats-range-tabs {
 }
 .settings-section { display: flex; flex-direction: column; gap: 12px; }
 .settings-section-gap { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+.settings-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.settings-section-heading h3 { margin: 0; color: var(--ink); font-family: var(--font-display); font-size: 16px; line-height: 1.2; }
+.settings-section-heading > svg { flex: none; color: #b78ec6; }
+.settings-section-kicker { margin: 0 0 3px; color: var(--muted-ink); font-family: var(--font-mono-local); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; }
 
 /* Footer */
 .settings-modal-footer {
@@ -1081,9 +1086,35 @@ html[data-theme="dark-glass"] .stats-range-tabs {
   width: 100%; height: 22px; border-radius: 6px;
   border: 1px solid rgba(0,0,0,0.06);
 }
+.settings-intensity-preview-swatch--deep { background: #1d4ed8; border-color: #1e40af; box-shadow: 0 2px 7px rgba(29, 78, 216, .18); }
 .settings-intensity-preview-label {
   font-family: var(--font-mono-local); font-size: 8px; color: var(--muted-ink);
 }
+
+/* ── Google sign-in ── */
+.auth-divider {
+  display: flex; align-items: center; gap: 10px;
+  margin: 16px 0 12px;
+  color: var(--muted-ink);
+  font-family: var(--font-mono-local); font-size: 8px;
+  letter-spacing: .08em; text-transform: uppercase;
+}
+.auth-divider::before, .auth-divider::after { content: ''; height: 1px; flex: 1; background: var(--line); }
+.google-auth-button {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; border: 1px solid var(--line); border-radius: 999px;
+  padding: 10px 14px; background: var(--card); color: var(--ink);
+  font-size: 11px; font-weight: 700;
+  transition: transform .18s, border-color .18s, background .18s, box-shadow .18s;
+}
+.google-auth-button:hover { transform: translateY(-1px); border-color: #c7b6ae; background: var(--background); box-shadow: 0 4px 12px rgba(132, 99, 79, .08); }
+.google-auth-button:disabled { opacity: .55; cursor: wait; transform: none; }
+.google-auth-mark {
+  display: grid; place-items: center; width: 18px; height: 18px;
+  border-radius: 50%; background: #fff; color: #4285f4;
+  font-family: Arial, sans-serif; font-size: 14px; font-weight: 800;
+}
+.auth-provider-note { margin: 7px 0 0; color: var(--muted-ink); font-size: 9px; text-align: center; }
 
 /* ── Dark glass overrides for settings modal ── */
 html[data-theme="dark-glass"] .settings-modal-box {
@@ -1098,6 +1129,9 @@ html[data-theme="dark-glass"] .settings-tab-bar {
   border-color: rgba(255,255,255,0.10) !important;
 }
 html[data-theme="dark-glass"] .settings-modal-h2 { color: #f8fafc !important; }
+html[data-theme="dark-glass"] .settings-modal-subtitle,
+html[data-theme="dark-glass"] .settings-section-kicker { color: #94a3b8 !important; }
+html[data-theme="dark-glass"] .settings-section-heading h3 { color: #f8fafc !important; }
 html[data-theme="dark-glass"] .settings-tab-btn { color: rgba(255,255,255,0.45) !important; }
 html[data-theme="dark-glass"] .settings-tab-btn--active { color: #f9a8d4 !important; border-bottom-color: #f9a8d4 !important; }
 html[data-theme="dark-glass"] .settings-tab-btn:hover { color: #f8fafc !important; }
@@ -1117,6 +1151,8 @@ html[data-theme="dark-glass"] .settings-intensity-preset-btn--active { backgroun
 html[data-theme="dark-glass"] .settings-intensity-slider { background: rgba(255,255,255,0.12) !important; accent-color: #f43f5e; }
 html[data-theme="dark-glass"] .settings-backdrop { background: rgba(0,0,0,0.65); }
 html[data-theme="dark-glass"] .settings-float-btn { background: rgba(14,17,26,0.85) !important; border-color: rgba(255,255,255,0.15) !important; color: #94a3b8 !important; box-shadow: 0 4px 0 rgba(0,0,0,.4), 0 8px 18px rgba(0,0,0,.3) !important; }
+html[data-theme="dark-glass"] .google-auth-button { background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.15); color: #f8fafc; }
+html[data-theme="dark-glass"] .google-auth-button:hover { background: rgba(255,255,255,.11); border-color: rgba(255,255,255,.25); }
 
 @media (max-width:600px) {
   .settings-theme-grid { grid-template-columns: 1fr; }

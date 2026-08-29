@@ -20,7 +20,6 @@ import {
   Clock,
   BookOpen,
   LogOut,
-  Sliders,
 } from 'lucide-react'
 import {
   getStoredTheme,
@@ -179,46 +178,26 @@ export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsMod
 
   return (
     <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        width: '100vw',
-        height: '100vh',
-        zIndex: 9999,
-      }}
-      className="flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 overflow-y-auto"
+      className="settings-backdrop"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}
     >
-      <div className="paper-card relative w-full max-w-md overflow-hidden p-6 sm:p-7 shadow-2xl animate-fade-in my-auto max-h-[90vh] overflow-y-auto">
-        <div className="tape tape-yellow" />
-
-        {/* Close button */}
-        <button
-          onClick={onClose}
-          className="absolute right-4 top-4 rounded-full p-1.5 text-muted-ink hover:bg-black/5 transition"
-          aria-label="Close modal"
-        >
-          <X className="size-4" />
-        </button>
-
-        {/* Header */}
-        <div className="flex items-center gap-2.5 mb-4">
-          <div className="brand-sticker size-8! rounded-lg!">
-            <Sparkles className="size-4" />
+      <div className="settings-modal-box" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
+        <header className="settings-modal-header">
+          <div className="settings-modal-title-row">
+            <div className="settings-modal-star" aria-hidden="true"><Sparkles className="size-5" /></div>
+            <div>
+              <p className="eyebrow">workspace preferences</p>
+              <h2 id="settings-modal-title" className="settings-modal-h2">Settings</h2>
+              <p className="settings-modal-subtitle">Make your study space feel like yours.</p>
+            </div>
           </div>
-          <div>
-            <p className="eyebrow">preferences</p>
-            <h3 className="font-display text-lg font-bold text-ink">
-              Settings
-            </h3>
-          </div>
-        </div>
+          <button onClick={onClose} className="settings-close-btn" aria-label="Close modal"><X className="size-4" /></button>
+        </header>
 
         {/* Tab Switcher */}
-        <div className="flex gap-1 border-b border-line pb-2 mb-4">
+        <nav className="settings-tab-bar" aria-label="Settings sections">
           {[
             { id: 'theme', label: 'Theme', icon: Palette },
             { id: 'line', label: 'LINE Bot', icon: MessageCircle },
@@ -227,127 +206,69 @@ export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsMod
             <button
               key={id}
               onClick={() => setActiveTab(id as any)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                activeTab === id
-                  ? 'bg-paper text-ink shadow-xs border border-line font-bold'
-                  : 'text-muted-ink hover:text-ink'
-              }`}
+              className={`settings-tab-btn ${activeTab === id ? 'settings-tab-btn--active' : ''}`}
+              aria-current={activeTab === id ? 'page' : undefined}
             >
               <Icon className="size-3.5" />
               <span>{label}</span>
-              {id === 'line' && isConnected && (
-                <span className="size-1.5 rounded-full bg-emerald-500" />
-              )}
+              {id === 'line' && isConnected && <span className="settings-online-dot" aria-label="Connected" />}
             </button>
           ))}
-        </div>
+        </nav>
 
-        {/* Tab 1: THEME & INTENSITY (LATEST DESIGN) */}
+        <div className="settings-modal-body">
+        {/* Tab 1: THEME & INTENSITY */}
         {activeTab === 'theme' && (
-          <div className="space-y-4 pt-1">
+          <div className="settings-section">
             {/* Theme Grid */}
-            <div>
-              <p className="text-[11px] font-mono uppercase tracking-wider text-muted-ink mb-2">
-                เลือกธีม (Theme)
-              </p>
-              <div className="grid grid-cols-3 gap-2">
+            <div className="settings-section-gap">
+              <div className="settings-section-heading"><div><p className="settings-section-kicker">appearance</p><h3>Choose your atmosphere</h3></div><Palette className="size-4" /></div>
+              <div className="settings-theme-grid">
                 {[
-                  { id: 'cozy', label: 'Cozy Paper', icon: Feather },
-                  { id: 'light', label: 'Light Glass', icon: Sun },
-                  { id: 'dark-glass', label: 'Dark Glass', icon: Moon },
-                ].map(({ id, label, icon: Icon }) => (
+                  { id: 'cozy', label: 'Cozy Paper', description: 'Warm, soft, and familiar', icon: Feather },
+                  { id: 'light', label: 'Light Glass', description: 'Clean and airy', icon: Sun },
+                  { id: 'dark-glass', label: 'Dark Glass', description: 'Quiet focus after dark', icon: Moon },
+                ].map(({ id, label, description, icon: Icon }) => (
                   <button
                     key={id}
                     onClick={() => handleThemeChange(id as AppTheme)}
                     data-active={currentTheme === id ? 'true' : 'false'}
-                    className={`settings-theme-option settings-theme-option-${id} flex flex-col items-center justify-center gap-2 p-3 rounded-xl border transition ${
-                      currentTheme === id
-                        ? 'border-[#ee8d92] bg-[#fff5f5] text-ink font-bold shadow-xs'
-                        : 'border-line bg-paper/60 text-muted-ink hover:border-[#ee8d92]/50 hover:text-ink'
-                    }`}
+                    className={`settings-theme-card ${currentTheme === id ? `settings-theme-card--active settings-theme-card--active-${id === 'cozy' ? 'cozy' : id === 'light' ? 'light' : 'dark'}` : ''}`}
+                    aria-pressed={currentTheme === id}
                   >
-                    <Icon className="size-5" />
-                    <span className="text-[11px]">{label}</span>
+                    <span className={`settings-theme-icon settings-theme-icon--${id === 'dark-glass' ? 'dark' : id}`}><Icon className="size-4.5" /></span>
+                    <span className="settings-theme-name-row"><strong className={`settings-theme-name ${id === 'dark-glass' ? 'settings-theme-name--dark' : ''}`}>{label}</strong>{currentTheme === id && <span className={`settings-theme-check settings-theme-check--${id === 'dark-glass' ? 'dark' : id === 'light' ? 'light' : 'cozy'}`}><Check className="size-3" /></span>}</span>
+                    <span className={`settings-theme-desc ${id === 'dark-glass' ? 'settings-theme-desc--dark' : ''}`}>{description}</span>
                   </button>
                 ))}
               </div>
             </div>
 
             {/* Intensity Setting */}
-            <div className="settings-intensity-panel rounded-2xl border border-line bg-paper/60 p-4 space-y-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-[11px] font-bold leading-tight text-ink">
-                    <Sliders className="size-3.5 shrink-0 text-[#ee8d92]" />
-                    <span>Deep Focus</span>
-                  </div>
-                  <p className="mt-1 pl-5 text-[9px] uppercase tracking-wide text-muted-ink">
-                    calendar intensity · darkest shade
-                  </p>
-                </div>
-                <span className="settings-intensity-value inline-flex shrink-0 items-baseline gap-0.5 rounded-full border border-[#f0c4c8] bg-[#fff5f5] px-2 py-1 font-mono text-[9px] font-bold leading-none text-[#c96d76] whitespace-nowrap">
-                  {formatThreshold(intensityMinutes)}
-                  <span className="font-sans text-[8px] font-semibold">/ day</span>
-                </span>
+            <div className="settings-intensity-box">
+              <div className="settings-intensity-header">
+                <div><strong>Deep Focus</strong><p className="settings-intensity-desc">Set the daily minutes needed for your darkest calendar shade.</p></div>
+                <span className="settings-intensity-val">{formatThreshold(intensityMinutes)} / day</span>
               </div>
 
-              {/* Presets */}
-              <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-6">
-                {presets.map((p) => (
-                  <button
-                    key={p.value}
-                    onClick={() => handleIntensityChange(p.value)}
-                    data-active={intensityMinutes === p.value ? 'true' : 'false'}
-                    className={`py-1.5 rounded-lg text-[10px] font-mono border transition ${
-                      intensityMinutes === p.value
-                        ? 'bg-[#ee8d92] text-white border-[#ee8d92] font-bold shadow-xs'
-                        : 'border-line bg-paper text-muted-ink hover:border-[#ee8d92]'
-                    }`}
-                  >
-                    {p.label}
-                  </button>
-                ))}
+              <div className="settings-intensity-presets">
+                {presets.map((p) => <button key={p.value} onClick={() => handleIntensityChange(p.value)} data-active={intensityMinutes === p.value ? 'true' : 'false'} className={`settings-intensity-preset-btn ${intensityMinutes === p.value ? 'settings-intensity-preset-btn--active' : ''}`}>{p.label}</button>)}
               </div>
 
-              {/* Slider */}
-              <input
-                type="range"
-                min={15}
-                max={360}
-                step={15}
-                value={intensityMinutes}
-                onChange={(e) => handleIntensityChange(Number(e.target.value))}
-                className="w-full h-1.5 bg-line rounded-lg appearance-none cursor-pointer accent-[#ee8d92]"
-              />
+              <input type="range" min={15} max={360} step={15} value={intensityMinutes} onChange={(e) => handleIntensityChange(Number(e.target.value))} className="settings-intensity-slider" aria-label="Deep Focus threshold" />
 
-              {/* 5-step Preview bar */}
-              <div className="grid grid-cols-5 gap-1.5 pt-1">
-                <div className="flex flex-col items-center gap-1">
-                  <div className="w-full h-3 rounded-md bg-emerald-500/20 border border-emerald-500/30" />
-                  <span className="text-[8px] font-mono text-muted-ink">&gt;0m</span>
-                </div>
-                <div className="flex flex-col items-center gap-1">
-                  <div className="w-full h-3 rounded-md bg-emerald-500/40 border border-emerald-500/50" />
-                  <span className="text-[8px] font-mono text-muted-ink">&ge;{Math.round(intensityMinutes * 0.2)}m</span>
-                </div>
-                <div className="flex flex-col items-center gap-1">
-                  <div className="w-full h-3 rounded-md bg-sky-500/45 border border-sky-500/60" />
-                  <span className="text-[8px] font-mono text-muted-ink">&ge;{Math.round(intensityMinutes * 0.4)}m</span>
-                </div>
-                <div className="flex flex-col items-center gap-1">
-                  <div className="w-full h-3 rounded-md bg-indigo-500/60 border border-indigo-500/80" />
-                  <span className="text-[8px] font-mono text-muted-ink">&ge;{Math.round(intensityMinutes * 0.6)}m</span>
-                </div>
-                <div className="flex flex-col items-center gap-1">
-                  <div className="w-full h-3 rounded-md border border-[#1e40af] bg-[#1d4ed8] shadow-xs" />
-                  <span className="text-[8px] font-mono font-bold text-ink">&ge;{intensityMinutes >= 60 ? `${(intensityMinutes/60).toFixed(1).replace('.0','')}h` : `${intensityMinutes}m`}</span>
-                </div>
+              <div className="settings-intensity-preview-grid" aria-label="Calendar intensity preview">
+                <div className="settings-intensity-preview-item"><div className="settings-intensity-preview-swatch bg-emerald-500/20 border-emerald-500/30" /><span className="settings-intensity-preview-label">&gt;0m</span></div>
+                <div className="settings-intensity-preview-item"><div className="settings-intensity-preview-swatch bg-emerald-500/40 border-emerald-500/50" /><span className="settings-intensity-preview-label">&ge;{Math.round(intensityMinutes * 0.2)}m</span></div>
+                <div className="settings-intensity-preview-item"><div className="settings-intensity-preview-swatch bg-sky-500/45 border-sky-500/60" /><span className="settings-intensity-preview-label">&ge;{Math.round(intensityMinutes * 0.4)}m</span></div>
+                <div className="settings-intensity-preview-item"><div className="settings-intensity-preview-swatch bg-indigo-500/60 border-indigo-500/80" /><span className="settings-intensity-preview-label">&ge;{Math.round(intensityMinutes * 0.6)}m</span></div>
+                <div className="settings-intensity-preview-item"><div className="settings-intensity-preview-swatch settings-intensity-preview-swatch--deep" /><span className="settings-intensity-preview-label">&ge;{intensityMinutes >= 60 ? `${(intensityMinutes / 60).toFixed(1).replace('.0', '')}h` : `${intensityMinutes}m`}</span></div>
               </div>
             </div>
           </div>
         )}
 
-        {/* Tab 2: LINE BOT (ORIGINAL FULL DESIGN) */}
+        {/* Tab 2: LINE BOT */}
         {activeTab === 'line' && (
           <div className="space-y-4 pt-1">
             {!user ? (
@@ -523,7 +444,7 @@ export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsMod
           </div>
         )}
 
-        {/* Tab 3: ACCOUNT (ORIGINAL FULL DESIGN) */}
+        {/* Tab 3: ACCOUNT */}
         {activeTab === 'account' && (
           <div className="text-center pt-2">
             {user ? (
@@ -583,6 +504,12 @@ export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsMod
             )}
           </div>
         )}
+        </div>
+
+        <footer className="settings-modal-footer">
+          <span>Changes save automatically</span>
+          <button type="button" className="settings-close-footer-btn" onClick={onClose}>done</button>
+        </footer>
       </div>
     </div>
   )

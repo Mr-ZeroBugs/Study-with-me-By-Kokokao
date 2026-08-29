@@ -80,6 +80,26 @@ export function AuthModal({ isOpen, onClose, user, onUserChange }: AuthModalProp
     }
   }
 
+  const handleGoogleSignIn = async () => {
+    setLoading(true)
+    setMessage(null)
+
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}${window.location.pathname}`,
+        },
+      })
+      if (error) throw error
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Unable to continue with Google.'
+      setMessage({ type: 'error', text: errorMessage })
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleSignOut = async () => {
     setLoading(true)
     await supabase.auth.signOut()
@@ -220,6 +240,18 @@ export function AuthModal({ isOpen, onClose, user, onUserChange }: AuthModalProp
                 {loading ? 'Please wait...' : isSignUp ? 'Create cozy account' : 'Sign in & sync'}
               </button>
             </form>
+
+            <div className="auth-divider"><span>or continue with</span></div>
+            <button
+              type="button"
+              onClick={handleGoogleSignIn}
+              disabled={loading}
+              className="google-auth-button"
+            >
+              <span className="google-auth-mark" aria-hidden="true">G</span>
+              {loading ? 'Connecting...' : 'Continue with Google'}
+            </button>
+            <p className="auth-provider-note">Use your Google account to sync across devices.</p>
 
             <div className="mt-4 text-center">
               <button
