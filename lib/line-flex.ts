@@ -224,6 +224,9 @@ const doneButton = (task: Record<string, unknown>): Fc => {
   }
 }
 
+const sharedTaskNotice = (): Fc =>
+  t('งานทีม · ทำเสร็จในเว็บ', { size: 'xxs', color: g.iris, wrap: true, maxLines: 2, align: 'center', adjustMode: 'shrink-to-fit' })
+
 const footerBar = (...buttons: Fc[]): Fc => ({
   type: 'box',
   layout: 'horizontal',
@@ -345,6 +348,8 @@ function taskRow(task: Record<string, unknown>, index: number): Fc {
   const subject = compact(task.subject, 'General')
   const dueDate = compact(task.due_date, 'No deadline')
   const meta = [subject !== 'General' ? subject : '', dueDate].filter(Boolean).join(' · ')
+  const isShared = Boolean(task.workspace_id)
+  const workspaceName = isShared ? compact(task.workspace_name, 'Team Space') : ''
 
   return {
     type: 'box',
@@ -364,17 +369,18 @@ function taskRow(task: Record<string, unknown>, index: number): Fc {
         contents: [
           t(title, { size: 'sm', weight: 'bold', color: g.ink, wrap: true, maxLines: 2 }),
           t(meta || 'No deadline', { size: 'xxs', color: g.ghost, wrap: true, maxLines: 1 }),
+          ...(workspaceName ? [t('from: ' + workspaceName, { size: 'xxs', color: g.iris, weight: 'bold', wrap: true, maxLines: 1, adjustMode: 'shrink-to-fit' })] : []),
         ],
       },
       {
         type: 'box',
         layout: 'vertical',
-        width: '68px',
+        width: '76px',
         spacing: 'xs',
         alignItems: 'center',
         contents: [
           chip(priority.label, priority.color, priority.backgroundColor, priority.borderColor),
-          doneButton(task),
+          isShared ? sharedTaskNotice() : doneButton(task),
         ],
       },
     ],
@@ -387,6 +393,7 @@ function eventRow(event: Record<string, unknown>, index: number): Fc {
   const date = compact(event.event_date, 'TBD')
   const parts = dateParts(date)
   const notes = compact(event.notes)
+  const workspaceName = event.workspace_id ? compact(event.workspace_name, 'Team Space') : ''
 
   return {
     type: 'box',
@@ -422,6 +429,7 @@ function eventRow(event: Record<string, unknown>, index: number): Fc {
         contents: [
           t(title, { size: 'sm', weight: 'bold', color: g.ink, wrap: true, maxLines: 2 }),
           t(notes || date, { size: 'xxs', color: g.ghost, wrap: true, maxLines: 1 }),
+          ...(workspaceName ? [t('from: ' + workspaceName, { size: 'xxs', color: g.iris, weight: 'bold', wrap: true, maxLines: 1, adjustMode: 'shrink-to-fit' })] : []),
         ],
       },
       chip(style.label, style.color, style.backgroundColor, style.borderColor),

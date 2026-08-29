@@ -7,9 +7,13 @@ import { getLocalDateKey } from '../lib/storage'
 import { TaskNotebook } from './task-notebook'
 import {
   createPlannerId,
+  loadSharedPlannerData,
   loadPlannerData,
+  removeSharedPlannerRecord,
   removePlannerRecord,
+  saveLocalSharedPlannerData,
   saveLocalPlannerData,
+  syncSharedPlannerData,
   syncPlannerData,
   type GoalStep,
   type LifeGoal,
@@ -17,6 +21,8 @@ import {
   type PlannerEvent,
   type PlannerEventType,
   type PlannerTask,
+  type SharedWorkspace,
+  type SharedWorkspaceMember,
   type TaskPriority,
 } from '../lib/planner-storage'
 
@@ -57,7 +63,41 @@ function formatDate(dateKey: string) {
   return new Date(`${dateKey}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-export function PlannerHub({ user, subjects, section = 'all' }: { user: User | null; subjects: string[]; section?: PlannerSection }) {
+type PlannerHubProps = {
+  user: User | null
+  subjects: string[]
+  section?: PlannerSection
+  workspaces: SharedWorkspace[]
+  workspaceId: string | null
+  onWorkspaceChange: (workspaceId: string | null) => void
+  onCreateWorkspace: (name: string) => Promise<void>
+  onJoinWorkspace: (inviteCode: string) => Promise<void>
+  onLeaveWorkspace: (workspaceId: string) => Promise<void>
+  onDeleteWorkspace: (workspaceId: string) => Promise<void>
+  workspaceMembers: SharedWorkspaceMember[]
+  workspaceMembersLoading?: boolean
+  workspaceLoading?: boolean
+  workspaceError?: string | null
+  onUserChange?: (user: User | null) => void
+}
+
+export function PlannerHub({
+  user,
+  subjects,
+  section = 'all',
+  workspaces,
+  workspaceId,
+  onWorkspaceChange,
+  onCreateWorkspace,
+  onJoinWorkspace,
+  onLeaveWorkspace,
+  onDeleteWorkspace,
+  workspaceMembers,
+  workspaceMembersLoading = false,
+  workspaceLoading = false,
+  workspaceError = null,
+  onUserChange,
+}: PlannerHubProps) {
   const [data, setData] = useState<PlannerData>(emptyData)
   const [loaded, setLoaded] = useState(false)
   const [taskTitle, setTaskTitle] = useState('')
@@ -71,6 +111,8 @@ export function PlannerHub({ user, subjects, section = 'all' }: { user: User | n
   const [eventDate, setEventDate] = useState('')
   const [eventType, setEventType] = useState<PlannerEventType>('important')
   const [stepDrafts, setStepDrafts] = useState<Record<string, string>>({})
+  const activeWorkspace = useMemo(() => workspaces.find((workspace) => workspace.id === workspaceId) ?? null, [workspaces, workspaceId])
+  const isShared = Boolean(activeWorkspace)
 
   useEffect(() => {
     setData(emptyData)
@@ -85,14 +127,19 @@ export function PlannerHub({ user, subjects, section = 'all' }: { user: User | n
       if (loading) return
       loading = true
       try {
-        const next = await loadPlannerData(user)
+        const next = workspaceId && user
+          ? await loadSharedPlannerData(user, workspaceId)
+          : await loadPlannerData(user)
         if (!active) return
         setData(next)
         setLoaded(true)
-        // Initial load still uploads local-only records after sign-in. Later
-        // background refreshes only read, so a stale tab never writes over a
-        // completion made from LINE.
-        if (syncLocalRecords) void syncPlannerData(user, next)
+        // Initial load uploads any local-only records into the active scope.
+        // Later background refreshes only read, so a stale tab never writes
+        // over a completion made from LINE or another shared member.
+        if (syncLocalRecords && user) {
+          if (workspaceId) void syncSharedPlannerData(user, workspaceId, next)
+          else void syncPlannerData(user, next)
+        }
       } finally {
         loading = false
       }
@@ -116,12 +163,17 @@ export function PlannerHub({ user, subjects, section = 'all' }: { user: User | n
       document.removeEventListener('visibilitychange', refreshIfVisible)
       window.clearInterval(interval)
     }
-  }, [user])
+  }, [user, workspaceId])
 
   const persist = (next: PlannerData) => {
     setData(next)
-    saveLocalPlannerData(next, user)
-    void syncPlannerData(user, next)
+    if (workspaceId && user) {
+      saveLocalSharedPlannerData(workspaceId, next)
+      void syncSharedPlannerData(user, workspaceId, next)
+    } else {
+      saveLocalPlannerData(next, user)
+      void syncPlannerData(user, next)
+    }
   }
 
   const openTasks = useMemo(() => data.tasks.filter((task) => !task.completed).sort(compareTaskUrgency), [data.tasks])
@@ -137,12 +189,15 @@ export function PlannerHub({ user, subjects, section = 'all' }: { user: User | n
   }
 
   const toggleTask = (id: string) => {
+    if (!workspaceId && data.tasks.find((task) => task.id === id)?.sourceWorkspaceId) return
     persist({ ...data, tasks: data.tasks.map((task) => task.id === id ? { ...task, completed: !task.completed } : task) })
   }
 
   const deleteTask = (id: string) => {
+    if (!workspaceId && data.tasks.find((task) => task.id === id)?.sourceWorkspaceId) return
     persist({ ...data, tasks: data.tasks.filter((task) => task.id !== id) })
-    void removePlannerRecord(user, 'planner_tasks', id)
+    if (workspaceId && user) void removeSharedPlannerRecord(user, workspaceId, 'planner_tasks', id)
+    else void removePlannerRecord(user, 'planner_tasks', id)
   }
 
   const addGoal = () => {
@@ -181,14 +236,16 @@ export function PlannerHub({ user, subjects, section = 'all' }: { user: User | n
   }
 
   const deleteEvent = (id: string) => {
+    if (!workspaceId && data.events.find((event) => event.id === id)?.sourceWorkspaceId) return
     persist({ ...data, events: data.events.filter((event) => event.id !== id) })
-    void removePlannerRecord(user, 'planner_events', id)
+    if (workspaceId && user) void removeSharedPlannerRecord(user, workspaceId, 'planner_events', id)
+    else void removePlannerRecord(user, 'planner_events', id)
   }
 
   const sectionTitle = section === 'tasks' ? 'to do & deadlines' : section === 'goals' ? 'life goals' : section === 'events' ? 'important dates' : section === 'planner' ? 'planner notebook' : 'planning hub'
   const sectionDescription = section === 'tasks' ? 'Turn every deadline into a next step you can actually start.' : section === 'goals' ? 'Keep the big dream visible, then make it smaller and kinder.' : section === 'events' ? 'Keep competitions, exams, project dates, and important moments in sight.' : section === 'planner' ? 'One notebook for tasks, deadlines, and the dates you cannot miss.' : 'Plan the next task, build the bigger dream, and remember the dates that matter.'
 
-  if (section === 'tasks' || section === 'planner') return <TaskNotebook user={user} data={data} showEvents={section === 'planner'} loaded={loaded} openTasks={openTasks} subjects={subjects} taskTitle={taskTitle} taskSubject={taskSubject} taskDue={taskDue} taskMinutes={taskMinutes} taskPriority={taskPriority} eventTitle={eventTitle} eventDate={eventDate} eventType={eventType} setTaskTitle={setTaskTitle} setTaskSubject={setTaskSubject} setTaskDue={setTaskDue} setTaskMinutes={setTaskMinutes} setTaskPriority={setTaskPriority} setEventTitle={setEventTitle} setEventDate={setEventDate} setEventType={setEventType} addTask={addTask} addEvent={addEvent} toggleTask={toggleTask} deleteTask={deleteTask} deleteEvent={deleteEvent} />
+  if (section === 'tasks' || section === 'planner') return <TaskNotebook user={user} data={data} showEvents={section === 'planner'} loaded={loaded} openTasks={openTasks} subjects={subjects} taskTitle={taskTitle} taskSubject={taskSubject} taskDue={taskDue} taskMinutes={taskMinutes} taskPriority={taskPriority} eventTitle={eventTitle} eventDate={eventDate} eventType={eventType} setTaskTitle={setTaskTitle} setTaskSubject={setTaskSubject} setTaskDue={setTaskDue} setTaskMinutes={setTaskMinutes} setTaskPriority={setTaskPriority} setEventTitle={setEventTitle} setEventDate={setEventDate} setEventType={setEventType} addTask={addTask} addEvent={addEvent} toggleTask={toggleTask} deleteTask={deleteTask} deleteEvent={deleteEvent} workspaceId={workspaceId} workspace={activeWorkspace} workspaces={workspaces} onWorkspaceChange={onWorkspaceChange} onCreateWorkspace={onCreateWorkspace} onJoinWorkspace={onJoinWorkspace} onLeaveWorkspace={onLeaveWorkspace} onDeleteWorkspace={onDeleteWorkspace} workspaceMembers={workspaceMembers} workspaceMembersLoading={workspaceMembersLoading} workspaceLoading={workspaceLoading} workspaceError={workspaceError} isShared={isShared} onUserChange={onUserChange} />
 
 
   return (

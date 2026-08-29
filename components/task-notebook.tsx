@@ -1,9 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BookOpen, CalendarDays, Circle, Coffee, Droplets, Flower2, Heart, ListChecks, MessageCircle, Moon, NotebookPen, Plus, Sparkles, Trash2 } from 'lucide-react'
+import { BookOpen, CalendarDays, Circle, Coffee, Copy, Droplets, Flower2, Heart, ListChecks, LogIn, MessageCircle, Moon, NotebookPen, Plus, Sparkles, Trash2, UsersRound, X } from 'lucide-react'
 import { getLocalDateKey } from '../lib/storage'
-import type { GoalStep, LifeGoal, PlannerData, PlannerEvent, PlannerEventType, PlannerTask, TaskPriority } from '../lib/planner-storage'
+import type { GoalStep, LifeGoal, PlannerData, PlannerEvent, PlannerEventType, PlannerTask, SharedWorkspace, SharedWorkspaceMember, TaskPriority } from '../lib/planner-storage'
 import type { User } from '@supabase/supabase-js'
 import { LineConnectModal } from './line-connect-modal'
 import { AuthModal } from './auth-modal'
@@ -44,6 +44,20 @@ type TaskNotebookProps = {
   toggleTask: (id: string) => void
   deleteTask: (id: string) => void
   deleteEvent: (id: string) => void
+  workspaceId: string | null
+  workspace: SharedWorkspace | null
+  workspaces: SharedWorkspace[]
+  onWorkspaceChange: (workspaceId: string | null) => void
+  onCreateWorkspace: (name: string) => Promise<void>
+  onJoinWorkspace: (inviteCode: string) => Promise<void>
+  onLeaveWorkspace: (workspaceId: string) => Promise<void>
+  onDeleteWorkspace: (workspaceId: string) => Promise<void>
+  workspaceMembers: SharedWorkspaceMember[]
+  workspaceMembersLoading?: boolean
+  workspaceLoading?: boolean
+  workspaceError?: string | null
+  isShared?: boolean
+  onUserChange?: (user: User | null) => void
 }
 
 
@@ -101,6 +115,20 @@ export function TaskNotebook({
   toggleTask,
   deleteTask,
   deleteEvent,
+  workspaceId,
+  workspace,
+  workspaces,
+  onWorkspaceChange,
+  onCreateWorkspace,
+  onJoinWorkspace,
+  onLeaveWorkspace,
+  onDeleteWorkspace,
+  workspaceMembers,
+  workspaceMembersLoading = false,
+  workspaceLoading = false,
+  workspaceError = null,
+  isShared = false,
+  onUserChange,
 }: TaskNotebookProps) {
   const [currentUser, setCurrentUser] = useState<User | null>(user ?? null)
   const [isLineModalOpen, setIsLineModalOpen] = useState(false)
@@ -113,10 +141,19 @@ export function TaskNotebook({
   const [calendarDate, setCalendarDate] = useState(() => new Date(2000, 0, 1))
   const [selectedDate, setSelectedDate] = useState('')
   const [captureType, setCaptureType] = useState<CaptureType>('task')
+  const [workspaceAction, setWorkspaceAction] = useState<'create' | 'join' | null>(null)
+  const [workspaceName, setWorkspaceName] = useState('')
+  const [inviteCode, setInviteCode] = useState('')
+  const [workspaceFormError, setWorkspaceFormError] = useState<string | null>(null)
+  const [workspaceMembersOpen, setWorkspaceMembersOpen] = useState(false)
 
   useEffect(() => {
     setCurrentUser(user ?? null)
   }, [user])
+
+  useEffect(() => {
+    setWorkspaceMembersOpen(false)
+  }, [workspaceId])
 
   const refreshLineConnection = useCallback(async () => {
     if (!currentUser) {
@@ -188,6 +225,48 @@ export function TaskNotebook({
     setSelectedDate('')
   }
 
+  const submitWorkspaceAction = async () => {
+    setWorkspaceFormError(null)
+    try {
+      if (workspaceAction === 'create') await onCreateWorkspace(workspaceName)
+      if (workspaceAction === 'join') await onJoinWorkspace(inviteCode)
+      setWorkspaceAction(null)
+      setWorkspaceName('')
+      setInviteCode('')
+    } catch (error) {
+      setWorkspaceFormError(error instanceof Error ? error.message : 'Something went wrong. Please try again.')
+    }
+  }
+
+  const closeWorkspaceAction = () => {
+    setWorkspaceAction(null)
+    setWorkspaceFormError(null)
+    setWorkspaceName('')
+    setInviteCode('')
+  }
+
+  const copyInviteCode = async () => {
+    if (!workspace?.inviteCode || !navigator.clipboard) return
+    try { await navigator.clipboard.writeText(workspace.inviteCode) } catch { /* Clipboard permission is optional. */ }
+  }
+
+  const exitWorkspace = async () => {
+    if (!workspace) return
+    const isOwner = currentUser?.id === workspace.ownerId
+    const message = isOwner
+      ? `Delete “${workspace.name}” for everyone? This removes its shared tasks and dates.`
+      : `Leave “${workspace.name}”? You can join again with the invite code.`
+    if (!window.confirm(message)) return
+    setWorkspaceFormError(null)
+    try {
+      if (isOwner) await onDeleteWorkspace(workspace.id)
+      else await onLeaveWorkspace(workspace.id)
+      setWorkspaceMembersOpen(false)
+    } catch (error) {
+      setWorkspaceFormError(error instanceof Error ? error.message : isOwner ? 'Could not delete the shared space.' : 'Could not leave the shared space.')
+    }
+  }
+
   return (
     <section className="task-notebook-page">
       <div className="task-notebook-shell">
@@ -205,6 +284,40 @@ export function TaskNotebook({
             <span>✦ {openTasks.length} things on your mind</span>
           </div>
         </div>
+
+        <div className="planner-workspace-strip" aria-label="Planner workspace">
+          <div className="workspace-switcher">
+            <UsersRound className="workspace-strip-icon" aria-hidden="true" />
+            <div className="workspace-switcher-copy">
+              <span className="workspace-kicker">planner space</span>
+              <select aria-label="Planner workspace" value={workspaceId ?? ''} onChange={(event) => onWorkspaceChange(event.target.value || null)}>
+                <option value="">personal</option>
+                {workspaces.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
+              </select>
+            </div>
+            {workspace && <span className="workspace-shared-badge">shared · {workspace.inviteCode}</span>}
+          </div>
+          <div className="workspace-actions">
+            {workspace && <button type="button" className="workspace-copy-button" onClick={copyInviteCode} title="Copy invite code"><Copy className="size-3" /> copy code</button>}
+            {workspace && <button type="button" className="workspace-members-button" onClick={() => { setWorkspaceFormError(null); setWorkspaceMembersOpen((open) => !open) }}><UsersRound className="size-3.5" /> {workspaceMembersLoading ? 'members…' : workspaceMembers.length ? `${workspaceMembers.length} member${workspaceMembers.length === 1 ? '' : 's'}` : 'view members'}</button>}
+            {currentUser ? <>
+              <button type="button" className="workspace-action-button" onClick={() => { setWorkspaceFormError(null); setWorkspaceAction('create') }}><Plus className="size-3.5" /> new space</button>
+              <button type="button" className="workspace-action-button primary" onClick={() => { setWorkspaceFormError(null); setWorkspaceAction('join') }}>join with code</button>
+            </> : <button type="button" className="workspace-action-button primary" onClick={() => setIsAuthOpen(true)}><LogIn className="size-3.5" /> sign in to share</button>}
+          </div>
+        </div>
+
+        {workspace && workspaceMembersOpen && <div className="workspace-members-panel" aria-label="Shared space members">
+          <div className="workspace-members-heading"><div><p className="workspace-kicker">inside this shared space</p><strong>{workspace.name}</strong></div><button type="button" aria-label="Close member list" onClick={() => setWorkspaceMembersOpen(false)}><X className="size-4" /></button></div>
+          {workspaceMembersLoading ? <p className="workspace-members-empty">loading members…</p> : workspaceMembers.length ? <div className="workspace-member-list">{workspaceMembers.map((member) => <div className="workspace-member-row" key={member.userId}><span className={`workspace-member-avatar ${member.role === 'owner' ? 'owner' : ''}`}>{(member.displayName || 'M').slice(0, 1).toUpperCase()}</span><div><strong>{member.displayName}{member.userId === currentUser?.id ? ' · you' : ''}</strong><span>{member.role === 'owner' ? 'owner' : member.email || 'member'}</span></div></div>)}</div> : <p className="workspace-members-empty">member details are unavailable until the shared planner migration is applied.</p>}
+          <div className="workspace-members-footer"><span>{workspaceFormError || workspaceError || 'Everyone in this space can add, complete, and remove tasks or dates.'}</span><button type="button" className="workspace-leave-button" onClick={() => void exitWorkspace()}>{currentUser?.id === workspace.ownerId ? 'delete space' : 'leave space'}</button></div>
+        </div>}
+
+        {workspaceAction && <div className="workspace-action-panel">
+          <div className="workspace-action-heading"><div><p className="workspace-kicker">{workspaceAction === 'create' ? 'make room for a shared plan' : 'open a friend&apos;s shared plan'}</p><strong>{workspaceAction === 'create' ? 'Create a shared space' : 'Join with an invite code'}</strong></div><button type="button" aria-label="Close workspace form" onClick={closeWorkspaceAction}><X className="size-4" /></button></div>
+          {workspaceAction === 'create' ? <input aria-label="Shared space name" autoFocus value={workspaceName} placeholder="e.g. SAT study crew" onChange={(event) => setWorkspaceName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void submitWorkspaceAction() }} /> : <input aria-label="Shared space invite code" autoFocus value={inviteCode} placeholder="8-character invite code" onChange={(event) => setInviteCode(event.target.value.toUpperCase())} onKeyDown={(event) => { if (event.key === 'Enter') void submitWorkspaceAction() }} />}
+          <div className="workspace-action-footer"><span>{workspaceFormError || workspaceError || (workspaceAction === 'create' ? 'Share tasks and important dates with your people.' : 'Ask a friend for the code shown in their shared space.')}</span><button type="button" className="workspace-submit-button" disabled={workspaceLoading} onClick={() => void submitWorkspaceAction()}>{workspaceLoading ? 'saving…' : workspaceAction === 'create' ? 'create space' : 'join space'}</button></div>
+        </div>}
 
 
         <header className="task-notebook-header">
@@ -244,19 +357,19 @@ export function TaskNotebook({
                 {!loaded ? <p className="notebook-empty">opening your dates…</p> : upcomingEvents.length ? upcomingEvents.map((event, index) => <div className="swapped-date-item" key={event.id}>
                   <span className="swapped-date-number">{String(index + 1).padStart(2, '0')}</span>
                   <span className="swapped-date-calendar"><strong>{new Date(`${event.eventDate}T00:00:00`).getDate()}</strong><small>{new Date(`${event.eventDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short' })}</small></span>
-                  <div className="lined-task-copy"><strong>{event.title}</strong><span>{eventLabels[event.type]} · {formatDate(event.eventDate)}</span></div>
-                  <button aria-label={`Delete ${event.title}`} className="notebook-delete swapped-date-delete" onClick={() => deleteEvent(event.id)}><Trash2 className="size-3.5" /></button>
+                  <div className="lined-task-copy"><strong>{event.title}</strong><span>{eventLabels[event.type]} · {formatDate(event.eventDate)}</span>{event.sourceWorkspaceName && <small className="workspace-item-source">from {event.sourceWorkspaceName}</small>}</div>
+                  {!event.sourceWorkspaceId && <button aria-label={`Delete ${event.title}`} className="notebook-delete swapped-date-delete" onClick={() => deleteEvent(event.id)}><Trash2 className="size-3.5" /></button>}
                 </div>) : <div className="notebook-empty"><CalendarDays className="size-5" /><span>no important dates yet — add one above.</span></div>}
               </div>
               <div className="task-paper-footer"><span>{data.events.length} dates saved</span><span>keep the moments that matter close ♡</span></div>
             </> : <>
               <div className="lined-task-list">
-                {!loaded ? <p className="notebook-empty">opening your page…</p> : openTasks.length ? openTasks.slice(0, 8).map((task, index) => <div className="lined-task" key={task.id}>
-                  <button aria-label={`Mark ${task.title} complete`} className="notebook-check" onClick={() => toggleTask(task.id)}><Circle className="size-4" /></button>
+                {!loaded ? <p className="notebook-empty">opening your page…</p> : openTasks.length ? openTasks.slice(0, 8).map((task, index) => <div className={`lined-task ${task.sourceWorkspaceId ? 'shared-readonly-item' : ''}`} key={task.id}>
+                  <button aria-label={task.sourceWorkspaceId ? `${task.title} from ${task.sourceWorkspaceName ?? 'shared space'}` : `Mark ${task.title} complete`} title={task.sourceWorkspaceId ? 'Shared item — manage it in its workspace' : 'Mark complete'} className={`notebook-check ${task.sourceWorkspaceId ? 'shared-readonly-control' : ''}`} disabled={Boolean(task.sourceWorkspaceId)} onClick={() => toggleTask(task.id)}><Circle className="size-4" /></button>
                   <span className="lined-task-number">{String(index + 1).padStart(2, '0')}</span>
-                  <div className="lined-task-copy"><strong>{task.title}</strong><span>{task.subject} · {task.estimatedMinutes}m · {task.dueDate ? formatDate(task.dueDate) : 'no deadline'}</span></div>
-                  <span className={`notebook-priority priority-${task.priority}`}>P{task.priority}</span>
-                  <button aria-label={`Delete ${task.title}`} className="notebook-delete" onClick={() => deleteTask(task.id)}><Trash2 className="size-3.5" /></button>
+                  <div className="lined-task-copy"><strong>{task.title}</strong><span>{task.subject} · {task.estimatedMinutes}m · {task.dueDate ? formatDate(task.dueDate) : 'no deadline'}</span>{task.sourceWorkspaceName && <small className="workspace-item-source">from {task.sourceWorkspaceName}</small>}</div>
+                  {task.sourceWorkspaceName ? <span className="notebook-source-tag">shared</span> : <span className={`notebook-priority priority-${task.priority}`}>P{task.priority}</span>}
+                  {!task.sourceWorkspaceId && <button aria-label={`Delete ${task.title}`} className="notebook-delete" onClick={() => deleteTask(task.id)}><Trash2 className="size-3.5" /></button>}
                 </div>) : <div className="notebook-empty"><ListChecks className="size-5" /><span>your page is clear — add the next small thing.</span></div>}
               </div>
               <div className="task-paper-footer"><span>{data.tasks.filter((task) => task.completed).length} completed</span><span>{openTasks.length > 8 ? `+ ${openTasks.length - 8} more` : 'keep going, gently ♡'}</span></div>
@@ -266,7 +379,7 @@ export function TaskNotebook({
           <div className="notebook-side-column">
             <section className="notebook-paper priorities-paper" aria-labelledby="priorities-heading">
               <div className="paper-heading"><h2 id="priorities-heading">priorities</h2><Heart className="size-5" /></div>
-              <div className="priority-list">{priorityTasks.length ? priorityTasks.map((task, index) => <div className="priority-line" key={task.id}><span className="priority-index">{index + 1}.</span><div><strong>{task.title}</strong><span>priority {task.priority} · {task.dueDate ? formatDate(task.dueDate) : 'no deadline'}</span></div></div>) : <p className="priority-empty">nothing queued yet — add the next small thing.</p>}</div>
+              <div className="priority-list">{priorityTasks.length ? priorityTasks.map((task, index) => <div className="priority-line" key={task.id}><span className="priority-index">{index + 1}.</span><div><strong>{task.title}</strong><span>priority {task.priority} · {task.dueDate ? formatDate(task.dueDate) : 'no deadline'}</span>{task.sourceWorkspaceName && <small className="workspace-item-source">from {task.sourceWorkspaceName}</small>}</div></div>) : <p className="priority-empty">nothing queued yet — add the next small thing.</p>}</div>
               <p className="side-note">the list follows deadline first, then priority when dates are close.</p>
             </section>
 
@@ -289,18 +402,19 @@ export function TaskNotebook({
             const dayEvents = eventsByDate[dateKey] ?? []
             const dayTasks = tasksByDate[dateKey] ?? []
             const itemCount = dayEvents.length + dayTasks.length
-            return <button type="button" key={dateKey} className={`notebook-calendar-day ${calendarEventDays.has(day) ? 'has-event' : ''} ${selectedDate === dateKey ? 'selected' : ''}`} onClick={() => selectCalendarDay(dateKey)}><span className="calendar-day-number">{day}</span>{dayEvents.slice(0, 1).map((event) => <small className="calendar-event-label" key={event.id}>{shortCalendarTitle(event.title)}</small>)}{dayTasks.slice(0, 2).map((task) => <small className={`calendar-task-label ${task.completed ? 'completed' : ''}`} key={task.id}>+ {shortCalendarTitle(task.title)}</small>)}{itemCount > 3 && <small className="calendar-more-label">+{itemCount - 3} more</small>}</button>
+            return <button type="button" key={dateKey} className={`notebook-calendar-day ${calendarEventDays.has(day) ? 'has-event' : ''} ${selectedDate === dateKey ? 'selected' : ''}`} onClick={() => selectCalendarDay(dateKey)}><span className="calendar-day-number">{day}</span>{dayEvents.slice(0, 1).map((event) => <small className="calendar-event-label" title={event.sourceWorkspaceName ? `from ${event.sourceWorkspaceName}` : event.title} key={event.id}>{event.sourceWorkspaceId ? '↗ ' : ''}{shortCalendarTitle(event.title)}</small>)}{dayTasks.slice(0, 2).map((task) => <small className={`calendar-task-label ${task.completed ? 'completed' : ''}`} title={task.sourceWorkspaceName ? `from ${task.sourceWorkspaceName}` : task.title} key={task.id}>+ {task.sourceWorkspaceId ? '↗ ' : ''}{shortCalendarTitle(task.title)}</small>)}{itemCount > 3 && <small className="calendar-more-label">+{itemCount - 3} more</small>}</button>
           })}</div>
-          <div className="selected-date-details" aria-live="polite">{selectedDate ? <><div className="selected-date-heading"><div><p className="eyebrow">selected day</p><strong>{formatDate(selectedDate)}</strong></div><span>{selectedEvents.length + selectedTasks.length} items</span></div>{selectedEvents.length || selectedTasks.length ? <div className="selected-date-list">{selectedEvents.map((event) => <div className="selected-date-item event-detail" key={event.id}><CalendarDays className="size-3.5" /><div><strong>{event.title}</strong><span>{eventLabels[event.type]}</span></div></div>)}{selectedTasks.map((task) => <div className={`selected-date-item task-detail ${task.completed ? 'completed' : ''}`} key={task.id}><ListChecks className="size-3.5" /><div><strong>+ {task.title}</strong><span>{task.subject} · {task.completed ? 'completed' : `${task.estimatedMinutes}m · priority ${task.priority}`}</span></div></div>)}</div> : <p className="selected-date-empty">nothing planned yet — a lovely blank page.</p>}</> : <p className="selected-date-empty">tap any day to see what&apos;s happening there.</p>}</div>
-          <div className="notebook-event-list">{upcomingEvents.length ? upcomingEvents.map((event: PlannerEvent) => <div className="notebook-event-item" key={event.id}><CalendarDays className="size-4" /><div><strong>{event.title}</strong><span>{formatDate(event.eventDate)} · {eventLabels[event.type]}</span></div>{captureType !== 'event' && <button aria-label={`Delete ${event.title}`} className="notebook-delete" onClick={() => deleteEvent(event.id)}><Trash2 className="size-3.5" /></button>}</div>) : <p className="notebook-event-empty">add the dates future-you should remember.</p>}</div>
+          <div className="selected-date-details" aria-live="polite">{selectedDate ? <><div className="selected-date-heading"><div><p className="eyebrow">selected day</p><strong>{formatDate(selectedDate)}</strong></div><span>{selectedEvents.length + selectedTasks.length} items</span></div>{selectedEvents.length || selectedTasks.length ? <div className="selected-date-list">{selectedEvents.map((event) => <div className="selected-date-item event-detail" key={event.id}><CalendarDays className="size-3.5" /><div><strong>{event.title}</strong><span>{eventLabels[event.type]}</span>{event.sourceWorkspaceName && <small className="workspace-item-source">from {event.sourceWorkspaceName}</small>}</div></div>)}{selectedTasks.map((task) => <div className={`selected-date-item task-detail ${task.completed ? 'completed' : ''}`} key={task.id}><ListChecks className="size-3.5" /><div><strong>+ {task.title}</strong><span>{task.subject} · {task.completed ? 'completed' : `${task.estimatedMinutes}m · priority ${task.priority}`}</span>{task.sourceWorkspaceName && <small className="workspace-item-source">from {task.sourceWorkspaceName}</small>}</div></div>)}</div> : <p className="selected-date-empty">nothing planned yet — a lovely blank page.</p>}</> : <p className="selected-date-empty">tap any day to see what&apos;s happening there.</p>}</div>
+          <div className="notebook-event-list">{upcomingEvents.length ? upcomingEvents.map((event: PlannerEvent) => <div className="notebook-event-item" key={event.id}><CalendarDays className="size-4" /><div><strong>{event.title}</strong><span>{formatDate(event.eventDate)} · {eventLabels[event.type]}</span>{event.sourceWorkspaceName && <small className="workspace-item-source">from {event.sourceWorkspaceName}</small>}</div>{captureType !== 'event' && !event.sourceWorkspaceId && <button aria-label={`Delete ${event.title}`} className="notebook-delete" onClick={() => deleteEvent(event.id)}><Trash2 className="size-3.5" /></button>}</div>) : <p className="notebook-event-empty">add the dates future-you should remember.</p>}</div>
         </section>}
 
         <div className="task-notebook-lower-grid">
           <section className="notebook-paper study-goals-paper" aria-labelledby="study-goals-heading">
             <div className="paper-heading"><h2 id="study-goals-heading">study goals</h2><BookOpen className="size-5" /></div>
-            <div className="goal-lines">{goals.length ? goals.map((goal) => <div className="goal-line" key={goal.id}><span>•</span><div><strong>{goal.title}</strong><small>{goalProgress(goal, data.steps)}% complete</small></div></div>) : [1, 2, 3].map((item) => <div className="empty-goal-line" key={item}><span>•</span><i /></div>)}</div>
+            {isShared ? <p className="goal-paper-hint">shared spaces keep tasks + dates together. your life goals stay personal.</p> : <><div className="goal-lines">{goals.length ? goals.map((goal) => <div className="goal-line" key={goal.id}><span>•</span><div><strong>{goal.title}</strong><small>{goalProgress(goal, data.steps)}% complete</small></div></div>) : [1, 2, 3].map((item) => <div className="empty-goal-line" key={item}><span>•</span><i /></div>)}</div>
             {!goals.length && <p className="goal-paper-hint">your big dreams can live here too.</p>}
             {goals.length > 0 && <a className="notebook-text-link" href="/goals">open life goals →</a>}
+            </>}
           </section>
 
           <section className="notebook-paper notes-paper" aria-labelledby="notes-heading">
@@ -329,7 +443,7 @@ export function TaskNotebook({
         isOpen={isAuthOpen}
         onClose={() => setIsAuthOpen(false)}
         user={currentUser}
-        onUserChange={(newUser) => setCurrentUser(newUser)}
+        onUserChange={(newUser) => { setCurrentUser(newUser); onUserChange?.(newUser) }}
       />
     </section>
   )

@@ -18,6 +18,12 @@ CREATE INDEX IF NOT EXISTS idx_user_line_connections_user ON public.user_line_co
 CREATE INDEX IF NOT EXISTS idx_user_line_connections_line_user ON public.user_line_connections(line_user_id);
 CREATE INDEX IF NOT EXISTS idx_user_line_connections_code ON public.user_line_connections(link_code);
 
+-- Pairing codes are short-lived, but uniqueness protects against two users
+-- receiving the same active code at the same time.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_line_connections_link_code_unique
+  ON public.user_line_connections(link_code)
+  WHERE link_code IS NOT NULL;
+
 -- 3. Enable RLS
 ALTER TABLE public.user_line_connections ENABLE ROW LEVEL SECURITY;
 

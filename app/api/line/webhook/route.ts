@@ -3,6 +3,7 @@ import { verifyLineSignature, sendLineReply, parseTaskInput, parseEventInput } f
 import { createEventsFlex, createStatusFlex, createTaskDoneFlex, createTasksFlex } from '@/lib/line-flex'
 import { analyzeUserMessageWithGemini } from '@/lib/gemini'
 import { getSupabaseAdmin } from '@/lib/supabase-admin'
+import { decorateLineWorkspaceRow, loadLineWorkspaceContext } from '@/lib/line-workspaces'
 import crypto from 'crypto'
 
 export async function POST(request: Request) {
@@ -32,7 +33,7 @@ export async function POST(request: Request) {
         await sendLineReply(replyToken, [
           {
             type: 'text',
-            text: `👋 ยินดีต้อนรับสู่ Study Manager.koko!\n\nในการเริ่มใช้งานและรับแจ้งเตือน To-Do:\n1. เข้าสู่ระบบบนเว็บ StudyTimer ของคุณ\n2. ไปที่หน้า Tasks / Planner แล้วกด "📱 เชื่อมต่อ LINE"\n3. นำรหัสที่ได้ (เช่น LINK-1234) มาพิมพ์ส่งให้บอทที่นี่ได้เลยครับ ✨`,
+            text: `👋 ยินดีต้อนรับสู่ Study Manager.koko!\n\nในการเริ่มใช้งานและรับแจ้งเตือน To-Do:\n1. เข้าสู่ระบบบนเว็บ StudyTimer ของคุณ\n2. ไปที่หน้า Tasks / Planner แล้วกด "📱 เชื่อมต่อ LINE"\n3. นำรหัสที่ได้ (เช่น LINK-1234567890) มาพิมพ์ส่งให้บอทที่นี่ได้เลยครับ ✨`,
           },
         ])
         continue
@@ -59,6 +60,18 @@ export async function POST(request: Request) {
             continue
           }
 
+          const { data: taskToComplete } = await admin
+            .from('planner_tasks')
+            .select('title, workspace_id')
+            .eq('id', taskId)
+            .eq('user_id', userConn.user_id)
+            .maybeSingle()
+
+          if (taskToComplete?.workspace_id) {
+            await sendLineReply(replyToken, [{ type: 'text', text: 'งานนี้มาจาก Team Space จึงกด done จาก LINE ไม่ได้ครับ — เปิดเว็บเพื่ออัปเดตสถานะใน workspace นะ' }])
+            continue
+          }
+
           const { data: completedTask, error: completeError } = await admin
             .from('planner_tasks')
             .update({ completed: true })
@@ -82,8 +95,9 @@ export async function POST(request: Request) {
         const text = (event.message.text || '').trim()
         const today = new Date().toISOString().split('T')[0]
 
-        // 1. Check for Link Code e.g. "LINK-1234" or "/link LINK-1234"
-        const linkMatch = text.match(/\b(LINK-\d{4})\b/i)
+        // 1. New codes use ten digits. Keep accepting an old four-digit code
+        // until it expires so users already mid-link are not interrupted.
+        const linkMatch = text.match(/\b(LINK-(?:\d{10}|\d{4}))\b/i)
         if (linkMatch) {
           const code = linkMatch[1].toUpperCase()
           const { data: connection } = await admin
@@ -150,13 +164,14 @@ export async function POST(request: Request) {
           await sendLineReply(replyToken, [
             {
               type: 'text',
-              text: `⚠️ บัญชี LINE นี้ยังไม่ได้เชื่อมต่อกับระบบ\n\nวิธีเชื่อมต่อ:\n1. เข้าเว็บ StudyTimer แล้วกดปุ่ม "📱 เชื่อมต่อ LINE"\n2. นำรหัสที่ได้ (เช่น LINK-1234) มาพิมพ์ที่นี่ครับ`,
+              text: `⚠️ บัญชี LINE นี้ยังไม่ได้เชื่อมต่อกับระบบ\n\nวิธีเชื่อมต่อ:\n1. เข้าเว็บ StudyTimer แล้วกดปุ่ม "📱 เชื่อมต่อ LINE"\n2. นำรหัสที่ได้ (เช่น LINK-1234567890) มาพิมพ์ที่นี่ครับ`,
             },
           ])
           continue
         }
 
         const userId = userConn.user_id
+        const workspaceContext = await loadLineWorkspaceContext(admin, userId)
 
         // 3. Fast Command: /help
         if (text === '/help' || text === 'เมนู' || text === 'ช่วยเหลือ' || text === '/menu') {
@@ -199,11 +214,14 @@ export async function POST(request: Request) {
 
         // 4. Fast Command: /status
         if (text === '/status') {
-          const { count } = await admin
+          let statusQuery = admin
             .from('planner_tasks')
             .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId)
             .eq('completed', false)
+          statusQuery = workspaceContext.ids.length
+            ? statusQuery.or(`user_id.eq.${userId},workspace_id.in.(${workspaceContext.ids.join(',')})`)
+            : statusQuery.eq('user_id', userId)
+          const { count } = await statusQuery
 
           await sendLineReply(replyToken, [createStatusFlex(count)])
           continue
@@ -213,16 +231,22 @@ export async function POST(request: Request) {
         const doneCommand = text.match(/^\/done\s+(.+)$/i)
         if (doneCommand) {
           const taskQuery = doneCommand[1].trim()
-          const { data: matchedTask } = await admin
+          let doneQuery = admin
             .from('planner_tasks')
-            .select('id, title')
-            .eq('user_id', userId)
+            .select('id, title, workspace_id')
             .eq('completed', false)
             .ilike('title', '%' + taskQuery + '%')
-            .limit(1)
-            .maybeSingle()
+          doneQuery = workspaceContext.ids.length
+            ? doneQuery.or(`user_id.eq.${userId},workspace_id.in.(${workspaceContext.ids.join(',')})`)
+            : doneQuery.eq('user_id', userId)
+          const { data: matchedTasks } = await doneQuery.limit(1)
+          const matchedTask = matchedTasks?.[0]
 
           if (matchedTask) {
+            if (matchedTask.workspace_id) {
+              await sendLineReply(replyToken, [{ type: 'text', text: `งาน "${matchedTask.title}" มาจาก Team Space จึงกด done จาก LINE ไม่ได้ครับ — เปิดเว็บเพื่ออัปเดตสถานะใน workspace นะ` }])
+              continue
+            }
             await admin
               .from('planner_tasks')
               .update({ completed: true })
@@ -345,16 +369,22 @@ export async function POST(request: Request) {
           // --- AI ACTION: COMPLETE_TASK ---
           if (aiResult.action === 'COMPLETE_TASK') {
             const query = aiResult.taskQuery || text
-            const { data: matchedTasks } = await admin
+            let completeQuery = admin
               .from('planner_tasks')
               .select('*')
-              .eq('user_id', userId)
               .eq('completed', false)
               .ilike('title', `%${query}%`)
-              .limit(1)
+            completeQuery = workspaceContext.ids.length
+              ? completeQuery.or(`user_id.eq.${userId},workspace_id.in.(${workspaceContext.ids.join(',')})`)
+              : completeQuery.eq('user_id', userId)
+            const { data: matchedTasks } = await completeQuery.limit(1)
 
             if (matchedTasks && matchedTasks.length > 0) {
               const taskToComplete = matchedTasks[0]
+              if (taskToComplete.workspace_id) {
+                await sendLineReply(replyToken, [{ type: 'text', text: `งาน "${taskToComplete.title}" มาจาก Team Space จึงกด done จาก LINE ไม่ได้ครับ — เปิดเว็บเพื่ออัปเดตสถานะใน workspace นะ` }])
+                continue
+              }
               await admin
                 .from('planner_tasks')
                 .update({ completed: true })
@@ -376,6 +406,9 @@ export async function POST(request: Request) {
               ])
               continue
             }
+
+            await sendLineReply(replyToken, [{ type: 'text', text: `ยังหา task ที่ชื่อใกล้กับ "${query}" ไม่เจอครับ ลองกด /list เพื่อดูรายการอีกครั้งนะ` }])
+            continue
           }
 
           // --- AI ACTION: CHAT ---
@@ -408,30 +441,38 @@ export async function POST(request: Request) {
 
         // 6. Fallback Command: /list or /today
         if (text === '/list' || text === '/today' || text === 'ดูงาน' || text === 'งานวันนี้' || aiResult?.action === 'LIST_TODOS') {
-          const { data: tasks, error: taskError } = await admin
+          let taskQuery = admin
             .from('planner_tasks')
             .select('*')
-            .eq('user_id', userId)
             .eq('completed', false)
+          taskQuery = workspaceContext.ids.length
+            ? taskQuery.or(`user_id.eq.${userId},workspace_id.in.(${workspaceContext.ids.join(',')})`)
+            : taskQuery.eq('user_id', userId)
+          const { data: tasks, error: taskError } = await taskQuery
             .order('priority', { ascending: false })
             .order('due_date', { ascending: true })
             .limit(10)
 
-          await sendLineReply(replyToken, [createTasksFlex(taskError ? [] : (tasks ?? []))])
+          const visibleTasks = taskError ? [] : (tasks ?? []).map((task) => decorateLineWorkspaceRow(task, workspaceContext))
+          await sendLineReply(replyToken, [createTasksFlex(visibleTasks)])
           continue
         }
 
         // 7. Fallback Command: /events or /dates
         if (text === '/events' || text === '/dates' || text === 'ดูวันสำคัญ' || text === 'วันสำคัญ' || aiResult?.action === 'LIST_EVENTS') {
-          const { data: eventsList, error: eventError } = await admin
+          let eventQuery = admin
             .from('planner_events')
             .select('*')
-            .eq('user_id', userId)
             .gte('event_date', today)
+          eventQuery = workspaceContext.ids.length
+            ? eventQuery.or(`user_id.eq.${userId},workspace_id.in.(${workspaceContext.ids.join(',')})`)
+            : eventQuery.eq('user_id', userId)
+          const { data: eventsList, error: eventError } = await eventQuery
             .order('event_date', { ascending: true })
             .limit(10)
 
-          await sendLineReply(replyToken, [createEventsFlex(eventError ? [] : (eventsList ?? []))])
+          const visibleEvents = eventError ? [] : (eventsList ?? []).map((event) => decorateLineWorkspaceRow(event, workspaceContext))
+          await sendLineReply(replyToken, [createEventsFlex(visibleEvents)])
           continue
         }
 

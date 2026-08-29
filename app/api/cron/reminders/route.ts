@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabase-admin'
 import { sendLinePush } from '@/lib/line'
 import { createMorningReminderFlex } from '@/lib/line-flex'
+import { decorateLineWorkspaceRow, loadLineWorkspaceContext } from '@/lib/line-workspaces'
 
 export async function GET(request: Request) {
   try {
@@ -35,15 +36,24 @@ export async function GET(request: Request) {
     for (const conn of connections) {
       if (!conn.line_user_id) continue
 
-      // 2. Fetch pending tasks due today or urgent for this user
-      const { data: tasks } = await admin
+      // 2. Fetch pending tasks due today or urgent for this user, including
+      // every shared space they belong to.
+      const workspaceContext = await loadLineWorkspaceContext(admin, conn.user_id)
+      let taskQuery = admin
         .from('planner_tasks')
         .select('*')
-        .eq('user_id', conn.user_id)
         .eq('completed', false)
-        .or(`due_date.eq.${today},priority.eq.3`)
         .order('priority', { ascending: false })
-        .limit(5)
+        .order('due_date', { ascending: true })
+        .limit(50)
+      taskQuery = workspaceContext.ids.length
+        ? taskQuery.or(`user_id.eq.${conn.user_id},workspace_id.in.(${workspaceContext.ids.join(',')})`)
+        : taskQuery.eq('user_id', conn.user_id)
+      const { data: pendingTasks } = await taskQuery
+      const tasks = (pendingTasks ?? [])
+        .filter((task) => task.due_date === today || Number(task.priority) === 3)
+        .slice(0, 5)
+        .map((task) => decorateLineWorkspaceRow(task, workspaceContext))
 
       if (tasks && tasks.length > 0) {
         const success = await sendLinePush(conn.line_user_id, [createMorningReminderFlex(tasks, today)])
