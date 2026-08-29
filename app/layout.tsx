@@ -5,9 +5,31 @@ import { BottomNav } from '../components/bottom-nav'
 import { SettingsFloatingButton } from '../components/settings-floating-button'
 
 export const metadata: Metadata = {
+  metadataBase: new URL('https://study-with-me-by-kokokao.vercel.app'),
   title: 'study with me · focus softly',
   description: 'A cozy little timer for focused study sessions, gentle breaks, and tiny progress.',
-  generator: 'v0.app',
+  applicationName: 'Koko.study',
+  openGraph: {
+    type: 'website',
+    url: 'https://study-with-me-by-kokokao.vercel.app',
+    siteName: 'Koko.study',
+    title: 'Koko.study · focus softly',
+    description: 'A cozy little timer for focused study sessions, gentle breaks, and tiny progress.',
+    images: [
+      {
+        url: '/koko-study-cover.png',
+        width: 1254,
+        height: 1254,
+        alt: 'Koko.study mascot — focus softly and grow a little every day',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Koko.study · focus softly',
+    description: 'A cozy little timer for focused study sessions, gentle breaks, and tiny progress.',
+    images: ['/koko-study-cover.png'],
+  },
   icons: {
     icon: [
       {
@@ -65,4 +87,3 @@ export default function RootLayout({
     </html>
   )
 }
-
