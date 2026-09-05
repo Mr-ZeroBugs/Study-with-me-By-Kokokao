@@ -34,18 +34,23 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
   const saveTimeoutRef  = useRef<number|null>(null)
   const pendingSaveRef  = useRef<{plan:KokoRhythmPlan;user:User|null}|null>(null)
   const cloudSyncTimeoutRef = useRef<number|null>(null)
+  const syncRevisionRef = useRef(0)
 
   const queuePlanSave = useCallback((next: KokoRhythmPlan) => {
+    // Local-first is the durability contract: closing, refreshing, or losing
+    // the network immediately after an edit must never lose a group.
+    saveKokoRhythmPlan(user, next)
+    const revision = ++syncRevisionRef.current
     if (saveTimeoutRef.current) window.clearTimeout(saveTimeoutRef.current)
     pendingSaveRef.current = { plan: next, user }
     saveTimeoutRef.current = window.setTimeout(() => {
       const p = pendingSaveRef.current
-      if (p) saveKokoRhythmPlan(p.user, p.plan)
       if (p?.user) {
         if (cloudSyncTimeoutRef.current) window.clearTimeout(cloudSyncTimeoutRef.current)
         cloudSyncTimeoutRef.current = window.setTimeout(() => {
           void syncRhythmPlanToOntology(p.user!, p.plan).then((canonicalPlan) => {
-            setPlan((current) => current.updatedAt === p.plan.updatedAt ? canonicalPlan : current)
+            if (revision !== syncRevisionRef.current) return
+            setPlan(canonicalPlan)
             saveKokoRhythmPlan(p.user!, canonicalPlan)
           }).catch((error) => {
             // Ontology is optional until the migration is applied. The local
@@ -60,6 +65,7 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
 
   useEffect(() => () => {
     if (saveTimeoutRef.current) window.clearTimeout(saveTimeoutRef.current)
+    if (cloudSyncTimeoutRef.current) window.clearTimeout(cloudSyncTimeoutRef.current)
     const p = pendingSaveRef.current
     if (p) saveKokoRhythmPlan(p.user, p.plan)
   }, [])
@@ -68,23 +74,35 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
     const key = user?.id ?? null
     if (loadedUserRef.current === key) return
     loadedUserRef.current = key
+    syncRevisionRef.current = 0
+    pendingSaveRef.current = null
+    if (saveTimeoutRef.current) window.clearTimeout(saveTimeoutRef.current)
+    if (cloudSyncTimeoutRef.current) window.clearTimeout(cloudSyncTimeoutRef.current)
+    saveTimeoutRef.current = null
+    cloudSyncTimeoutRef.current = null
     const saved = loadKokoRhythmPlan(user)
     const localPlan = saved ?? createDefaultKokoRhythmPlan(subjects)
+    setPlan(localPlan)
+    setReady(true)
+    if (!saved) saveKokoRhythmPlan(user, localPlan)
     if (!user) {
-      setPlan(localPlan)
-      if (!saved) saveKokoRhythmPlan(user, localPlan)
-      setReady(true)
       return
     }
 
     void (async () => {
       try {
+        // Existing local data is already the last plan this device showed the
+        // learner. Do not rewrite the whole Ontology graph merely by opening
+        // this screen; meaningful edits are synced by queuePlanSave instead.
+        if (saved) return
         const cloudPlan = await loadRhythmPlanFromOntology(localPlan)
         const next = cloudPlan ?? localPlan
+        if (syncRevisionRef.current !== 0) return
         setPlan(next)
         saveKokoRhythmPlan(user, next)
         if (!cloudPlan && !hasMigratedRhythmPlan(user)) {
           const canonicalPlan = await syncRhythmPlanToOntology(user, next)
+          if (syncRevisionRef.current !== 0) return
           setPlan(canonicalPlan)
           saveKokoRhythmPlan(user, canonicalPlan)
         }
@@ -92,10 +110,6 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
         // The migration may not have been applied yet. Keep every existing
         // rhythm usable locally rather than blocking the learner's planner.
         console.info('Koko Rhythm cloud read is waiting for Ontology:', error)
-        setPlan(localPlan)
-        if (!saved) saveKokoRhythmPlan(user, localPlan)
-      } finally {
-        setReady(true)
       }
     })()
   }, [subjects, user])

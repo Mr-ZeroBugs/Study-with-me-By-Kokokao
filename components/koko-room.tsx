@@ -5,7 +5,7 @@ import {
   ArrowUpRight, CalendarDays, CheckCircle2, Circle,
   Flag, MessageCircle,
   Sparkles, Timer, Zap,
-  ClipboardPenLine, GitBranch, BarChart3,
+  ClipboardPenLine, BarChart3,
   BellRing, X,
 } from 'lucide-react'
 import type { User } from '@supabase/supabase-js'
@@ -47,8 +47,6 @@ type Props = {
   onDismissProactive: (task: PlannerTask) => void
   onOpenLine: () => void
   onOpenInbox: () => void
-  adaptiveProposalCount: number
-  onOpenAdaptivePlanner: () => void
   onOpenWeeklyReview: () => void
 }
 
@@ -370,7 +368,7 @@ export function KokoRoom({
   todayMinutes, streak,
   todayTasks, openTasks, completedTodayCount,
   upcomingEvents,
-  subjectLogs, nextBestAction, proactiveWindow, presentation, onAcceptNextAction, onDismissNextAction, onAcceptProactive, onDismissProactive, onOpenLine, onOpenInbox, adaptiveProposalCount, onOpenAdaptivePlanner, onOpenWeeklyReview,
+  subjectLogs, nextBestAction, proactiveWindow, presentation, onAcceptNextAction, onDismissNextAction, onAcceptProactive, onDismissProactive, onOpenLine, onOpenInbox, onOpenWeeklyReview,
 }: Props) {
   return (
     <main className="hd-page">
@@ -395,9 +393,6 @@ export function KokoRoom({
               <button type="button" className="hd-review-badge" onClick={onOpenWeeklyReview}>
                 <BarChart3 className="size-3" />weekly review
               </button>
-              {adaptiveProposalCount > 0 && <button type="button" className="hd-adaptive-badge" onClick={onOpenAdaptivePlanner}>
-                <GitBranch className="size-3" />{adaptiveProposalCount} plan tweak{adaptiveProposalCount === 1 ? '' : 's'}
-              </button>}
             </div>
           </div>
           <div className="hd-header-right">

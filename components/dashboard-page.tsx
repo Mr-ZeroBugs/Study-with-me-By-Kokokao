@@ -4,10 +4,11 @@ import { useEffect, useMemo, useState } from 'react'
 import type { User } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import {
-  calculateStreak, getLocalDateKey, loadStudyIntervals, loadStudyLogs, loadSubjectLogs,
+  calculateStreak, getLocalDateKey, getLocalLogs, getLocalStudyIntervals, getLocalSubjectLogs,
+  loadStudyIntervals, loadStudyLogs, loadSubjectLogs,
   type DayLog, type StudyInterval, type SubjectDayLogs,
 } from '../lib/storage'
-import { loadPlannerData, type PlannerData } from '../lib/planner-storage'
+import { loadLocalPlannerData, loadPlannerData, type PlannerData } from '../lib/planner-storage'
 import {
   getLevelInfo, getWeekMinutes, getWeekTimeLeft,
   getTodayQuests, loadGameState, saveGameState, reconcileGameState,
@@ -63,16 +64,30 @@ export function DashboardPage() {
     setNow(new Date())
     const loadData = async (u: User | null) => {
       const id = ++reqId
-      const [nextLogs, nextPlanner, nextBehaviorEvents, nextMemory, nextIntervals, nextFeedback] = await Promise.all([
-        loadStudyLogs(u), loadPlannerData(u), loadPlannerBehaviorEvents(u), u ? loadPersonalMemory().then((snapshot) => snapshot.active).catch(() => []) : Promise.resolve([]), loadStudyIntervals(u), loadManagerFeedback(u),
+      // Core cards update as soon as planner/focus data arrives. Memory and
+      // behavioral personalization are optional and must never hold Home open.
+      const [nextLogs, nextPlanner, nextIntervals] = await Promise.all([
+        loadStudyLogs(u), loadPlannerData(u), loadStudyIntervals(u),
       ])
       const nextSubjectLogs = await loadSubjectLogs(u, nextLogs)
       if (id !== reqId) return
-      setLogs(nextLogs); setSubjectLogs(nextSubjectLogs); setPlanner(nextPlanner); setBehaviorEvents(nextBehaviorEvents); setMemoryItems(nextMemory); setIntervals(nextIntervals); setManagerFeedback(nextFeedback); setDataLoaded(true)
+      setLogs(nextLogs); setSubjectLogs(nextSubjectLogs); setPlanner(nextPlanner); setIntervals(nextIntervals); setDataLoaded(true)
+
+      void Promise.all([
+        loadPlannerBehaviorEvents(u),
+        u ? loadPersonalMemory().then((snapshot) => snapshot.active).catch(() => []) : Promise.resolve([]),
+        loadManagerFeedback(u),
+      ]).then(([nextBehaviorEvents, nextMemory, nextFeedback]) => {
+        if (id !== reqId) return
+        setBehaviorEvents(nextBehaviorEvents); setMemoryItems(nextMemory); setManagerFeedback(nextFeedback)
+      })
     }
     const applySession = (u: User | null) => {
-      setUser(u); setLogs({}); setSubjectLogs({})
-      setPlanner({ tasks: [], events: [] }); setBehaviorEvents([]); setMemoryItems([]); setIntervals([]); setManagerFeedback([]); setDataLoaded(false)
+      // Render the per-account local snapshot immediately. Remote sync then
+      // refreshes it in place instead of showing an empty recommendation card.
+      setUser(u); setLogs(getLocalLogs(u)); setSubjectLogs(getLocalSubjectLogs(u))
+      setPlanner(loadLocalPlannerData(u)); setIntervals(getLocalStudyIntervals(u))
+      setBehaviorEvents([]); setMemoryItems([]); setManagerFeedback([]); setDataLoaded(true)
       void loadData(u)
     }
     supabase.auth.getSession().then(({ data }) => applySession(data.session?.user ?? null))
@@ -120,9 +135,8 @@ export function DashboardPage() {
     todayKey,
     rhythmPlan,
     subjectLogs,
-    adaptiveSignals: buildAdaptiveSignals(behaviorEvents),
     excludedTaskIds: dismissedTaskIds,
-  }), [planner.tasks, rhythmPlan, subjectLogs, todayKey, behaviorEvents, dismissedTaskIds])
+  }), [planner.tasks, rhythmPlan, subjectLogs, todayKey, dismissedTaskIds])
   const proactiveWindow = useMemo(() => chooseProactiveWindow({
     now, intervals, nextAction: nextBestAction,
     suppressed: nextBestAction ? feedbackSuppressesToday(managerFeedback, 'proactive_window', `window:${nextBestAction.task.id}`, now) : false,
@@ -210,7 +224,6 @@ export function DashboardPage() {
         upcomingEvents={upcomingEvents}
         subjectLogs={subjectLogs} nextBestAction={nextBestAction} proactiveWindow={proactiveWindow} presentation={presentation} onAcceptNextAction={handleNextActionAccepted} onDismissNextAction={handleNextActionDismissed} onAcceptProactive={handleProactiveAccepted} onDismissProactive={handleProactiveDismissed}
         onOpenLine={() => setIsLineModalOpen(true)} onOpenInbox={() => setIsInboxOpen(true)}
-        adaptiveProposalCount={adaptiveProposals.length} onOpenAdaptivePlanner={() => setIsAdaptiveOpen(true)}
         onOpenWeeklyReview={() => setIsWeeklyReviewOpen(true)}
       />
 
