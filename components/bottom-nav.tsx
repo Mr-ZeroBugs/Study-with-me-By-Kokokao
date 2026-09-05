@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { BarChart3, CalendarDays, LayoutDashboard, ListTodo, Clock3, Target } from 'lucide-react'
+import { BarChart3, LayoutDashboard, ListTodo, Clock3, Target } from 'lucide-react'
 import { usePathname } from 'next/navigation'
 
 const items = [

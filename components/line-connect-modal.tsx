@@ -59,6 +59,9 @@ export function LineConnectModal({ isOpen, onClose, user, onOpenAuth, onConnecti
     if (isOpen && user) {
       checkStatus()
     }
+  // Status is intentionally refreshed on modal/user changes. Including the
+  // local async function identity would trigger a request on every render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, user])
 
   const getAuthToken = async () => {

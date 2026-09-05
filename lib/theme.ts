@@ -63,4 +63,3 @@ export function setIntensityThreshold(minutes: number) {
     console.error('Failed to set intensity threshold:', err)
   }
 }
-

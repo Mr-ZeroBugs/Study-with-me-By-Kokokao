@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { CalendarClock, Check, ChevronRight, Circle, Flag, Plus, Sparkles, Trash2 } from 'lucide-react'
+import { CalendarClock, Check, Circle, Plus, Sparkles, Trash2 } from 'lucide-react'
 import type { User } from '@supabase/supabase-js'
 import { getLocalDateKey } from '../lib/storage'
 import { TaskNotebook } from './task-notebook'
@@ -15,8 +15,6 @@ import {
   saveLocalPlannerData,
   syncSharedPlannerData,
   syncPlannerData,
-  type GoalStep,
-  type LifeGoal,
   type PlannerData,
   type PlannerEvent,
   type PlannerEventType,
@@ -25,10 +23,15 @@ import {
   type SharedWorkspaceMember,
   type TaskPriority,
 } from '../lib/planner-storage'
+import { loadKokoRhythmPlan, rhythmRoleForSubject, type KokoRhythmPlan } from '../lib/rhythm-storage'
+import { ensureOntologySubject } from '../lib/ontology-client'
+import { findExactOpenDuplicate, prepareTaskInput } from '../lib/task-intelligence'
+import { adaptiveSubjectBoost, buildAdaptiveSignals, type AdaptiveSignals, type PlannerBehaviorEvent } from '../lib/adaptive-planner'
+import { loadPlannerBehaviorEvents, recordPlannerBehaviorEvent } from '../lib/adaptive-planner-client'
 
-const emptyData: PlannerData = { tasks: [], goals: [], steps: [], events: [] }
+const emptyData: PlannerData = { tasks: [], events: [] }
 const eventLabels: Record<PlannerEventType, string> = { competition: 'competition', project: 'project', exam: 'exam', important: 'important' }
-export type PlannerSection = 'all' | 'planner' | 'tasks' | 'goals' | 'events'
+export type PlannerSection = 'all' | 'planner' | 'tasks' | 'events'
 
 function daysUntil(dateKey: string) {
   if (!dateKey) return 999
@@ -46,21 +49,27 @@ function urgency(task: PlannerTask) {
   return { label: task.dueDate ? `${days}d left` : 'no deadline', tone: 'calm' }
 }
 
-// Deadlines lead the sort. Priority only breaks a near-tie (same day or one day apart).
+// Deadlines lead the sort. Koko Rhythm roles break a near-tie when configured;
+// the old 1–3 priority remains a safe fallback for users without a rhythm yet.
 const NO_DEADLINE_DAYS = 100_000
 const PRIORITY_TIE_WINDOW_DAYS = 1
-function compareTaskUrgency(a: PlannerTask, b: PlannerTask) {
+function rhythmRank(task: PlannerTask, plan: KokoRhythmPlan | null) {
+  const role = rhythmRoleForSubject(task.subject, plan)
+  return role === 'major' ? 0 : role === 'minor' ? 1 : role === 'maintenance' ? 2 : 3
+}
+function compareTaskUrgency(a: PlannerTask, b: PlannerTask, plan: KokoRhythmPlan | null, signals: AdaptiveSignals) {
   const aDays = a.dueDate ? daysUntil(a.dueDate) : NO_DEADLINE_DAYS
   const bDays = b.dueDate ? daysUntil(b.dueDate) : NO_DEADLINE_DAYS
   const deadlineDifference = aDays - bDays
   if (Math.abs(deadlineDifference) > PRIORITY_TIE_WINDOW_DAYS) return deadlineDifference
+  if (plan) {
+    const rhythmDifference = rhythmRank(a, plan) - rhythmRank(b, plan)
+    if (rhythmDifference !== 0) return rhythmDifference
+  }
+  const adaptiveDifference = adaptiveSubjectBoost(b.subject, signals) - adaptiveSubjectBoost(a.subject, signals)
+  if (adaptiveDifference !== 0) return adaptiveDifference
   if (a.priority !== b.priority) return a.priority - b.priority
   return deadlineDifference
-}
-
-function formatDate(dateKey: string) {
-  if (!dateKey) return 'no date yet'
-  return new Date(`${dateKey}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
 type PlannerHubProps = {
@@ -99,20 +108,19 @@ export function PlannerHub({
   onUserChange,
 }: PlannerHubProps) {
   const [data, setData] = useState<PlannerData>(emptyData)
+  const [rhythmPlan, setRhythmPlan] = useState<KokoRhythmPlan | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [taskTitle, setTaskTitle] = useState('')
   const [taskSubject, setTaskSubject] = useState('General')
   const [taskDue, setTaskDue] = useState('')
   const [taskMinutes, setTaskMinutes] = useState(30)
   const [taskPriority, setTaskPriority] = useState<TaskPriority>(2)
-  const [goalTitle, setGoalTitle] = useState('')
-  const [goalDate, setGoalDate] = useState('')
+  const [taskHint, setTaskHint] = useState('')
+  const [behaviorEvents, setBehaviorEvents] = useState<PlannerBehaviorEvent[]>([])
   const [eventTitle, setEventTitle] = useState('')
   const [eventDate, setEventDate] = useState('')
   const [eventType, setEventType] = useState<PlannerEventType>('important')
-  const [stepDrafts, setStepDrafts] = useState<Record<string, string>>({})
   const activeWorkspace = useMemo(() => workspaces.find((workspace) => workspace.id === workspaceId) ?? null, [workspaces, workspaceId])
-  const isShared = Boolean(activeWorkspace)
 
   useEffect(() => {
     setData(emptyData)
@@ -165,6 +173,19 @@ export function PlannerHub({
     }
   }, [user, workspaceId])
 
+  useEffect(() => {
+    setRhythmPlan(loadKokoRhythmPlan(user))
+    const refreshRhythm = () => setRhythmPlan(loadKokoRhythmPlan(user))
+    window.addEventListener('koko-rhythm-updated', refreshRhythm)
+    return () => window.removeEventListener('koko-rhythm-updated', refreshRhythm)
+  }, [user])
+
+  useEffect(() => {
+    let active = true
+    void loadPlannerBehaviorEvents(user).then((events) => { if (active) setBehaviorEvents(events) })
+    return () => { active = false }
+  }, [user])
+
   const persist = (next: PlannerData) => {
     setData(next)
     if (workspaceId && user) {
@@ -176,20 +197,47 @@ export function PlannerHub({
     }
   }
 
-  const openTasks = useMemo(() => data.tasks.filter((task) => !task.completed).sort(compareTaskUrgency), [data.tasks])
+  const adaptiveSignals = useMemo(() => buildAdaptiveSignals(behaviorEvents), [behaviorEvents])
+  const openTasks = useMemo(() => data.tasks.filter((task) => !task.completed).sort((a, b) => compareTaskUrgency(a, b, rhythmPlan, adaptiveSignals)), [data.tasks, rhythmPlan, adaptiveSignals])
   const upcomingEvents = useMemo(() => data.events.filter((event) => daysUntil(event.eventDate) >= -1).sort((a, b) => a.eventDate.localeCompare(b.eventDate)).slice(0, 5), [data.events])
   const completedToday = data.tasks.filter((task) => task.completed).length
 
   const addTask = () => {
-    const title = taskTitle.trim()
-    if (!title) return
-    const task: PlannerTask = { id: createPlannerId(), title, subject: taskSubject, dueDate: taskDue, estimatedMinutes: taskMinutes, priority: taskPriority, completed: false, createdAt: new Date().toISOString() }
+    if (!taskTitle.trim()) return
+    const prepared = prepareTaskInput({ title: taskTitle, subject: taskSubject, dueDate: taskDue, deadlineConfidence: taskDue ? 'explicit' : 'none' })
+    const duplicate = findExactOpenDuplicate(data.tasks, { title: prepared.title, subject: prepared.subject, dueDate: taskDue })
+    if (duplicate) {
+      setTaskHint('Already in your list — kept one clean copy.')
+      setTaskTitle('')
+      return
+    }
+    const task: PlannerTask = { id: createPlannerId(), title: prepared.title, subject: prepared.subject, dueDate: taskDue, estimatedMinutes: taskMinutes, priority: taskPriority, completed: false, createdAt: new Date().toISOString(), normalizedTitle: prepared.normalizedTitle, subjectKey: prepared.subjectKey, deadlineConfidence: prepared.deadlineConfidence }
     persist({ ...data, tasks: [task, ...data.tasks] })
+    if (user) {
+      void ensureOntologySubject(task.subject).then((subjectId) => {
+        setData((current) => {
+          const next = { ...current, tasks: current.tasks.map((item) => item.id === task.id ? { ...item, subjectId } : item) }
+          if (workspaceId) {
+            saveLocalSharedPlannerData(workspaceId, next)
+            void syncSharedPlannerData(user, workspaceId, next)
+          } else {
+            saveLocalPlannerData(next, user)
+            void syncPlannerData(user, next)
+          }
+          return next
+        })
+      }).catch(() => {
+        // Ontology migration is optional during rollout; the text subject still saves.
+      })
+    }
     setTaskTitle('')
+    setTaskHint('')
   }
 
   const toggleTask = (id: string) => {
-    if (!workspaceId && data.tasks.find((task) => task.id === id)?.sourceWorkspaceId) return
+    const currentTask = data.tasks.find((task) => task.id === id)
+    if (!currentTask || (!workspaceId && currentTask.sourceWorkspaceId)) return
+    if (!currentTask.completed) void recordPlannerBehaviorEvent(user, { type: 'task_completed', subject: currentTask.subject, taskId: currentTask.id }).then((event) => setBehaviorEvents((current) => [...current, event].slice(-250)))
     persist({ ...data, tasks: data.tasks.map((task) => task.id === id ? { ...task, completed: !task.completed } : task) })
   }
 
@@ -198,33 +246,6 @@ export function PlannerHub({
     persist({ ...data, tasks: data.tasks.filter((task) => task.id !== id) })
     if (workspaceId && user) void removeSharedPlannerRecord(user, workspaceId, 'planner_tasks', id)
     else void removePlannerRecord(user, 'planner_tasks', id)
-  }
-
-  const addGoal = () => {
-    const title = goalTitle.trim()
-    if (!title) return
-    const goal: LifeGoal = { id: createPlannerId(), title, description: '', targetDate: goalDate, subjects: [], shelfPosition: data.goals.length, createdAt: new Date().toISOString() }
-    persist({ ...data, goals: [goal, ...data.goals] })
-    setGoalTitle('')
-    setGoalDate('')
-  }
-
-  const addStep = (goalId: string) => {
-    const title = stepDrafts[goalId]?.trim()
-    if (!title) return
-    const goalSteps = data.steps.filter((step) => step.goalId === goalId)
-    const step: GoalStep = { id: createPlannerId(), goalId, title, dueDate: '', completed: false, orderIndex: goalSteps.length }
-    persist({ ...data, steps: [...data.steps, step] })
-    setStepDrafts((previous) => ({ ...previous, [goalId]: '' }))
-  }
-
-  const toggleStep = (id: string) => persist({ ...data, steps: data.steps.map((step) => step.id === id ? { ...step, completed: !step.completed } : step) })
-
-  const deleteGoal = (goalId: string) => {
-    const removedStepIds = data.steps.filter((step) => step.goalId === goalId).map((step) => step.id)
-    persist({ ...data, goals: data.goals.filter((goal) => goal.id !== goalId), steps: data.steps.filter((step) => step.goalId !== goalId) })
-    void removePlannerRecord(user, 'life_goals', goalId)
-    removedStepIds.forEach((id) => void removePlannerRecord(user, 'goal_steps', id))
   }
 
   const addEvent = () => {
@@ -242,10 +263,12 @@ export function PlannerHub({
     else void removePlannerRecord(user, 'planner_events', id)
   }
 
-  const sectionTitle = section === 'tasks' ? 'to do & deadlines' : section === 'goals' ? 'life goals' : section === 'events' ? 'important dates' : section === 'planner' ? 'planner notebook' : 'planning hub'
-  const sectionDescription = section === 'tasks' ? 'Turn every deadline into a next step you can actually start.' : section === 'goals' ? 'Keep the big dream visible, then make it smaller and kinder.' : section === 'events' ? 'Keep competitions, exams, project dates, and important moments in sight.' : section === 'planner' ? 'One notebook for tasks, deadlines, and the dates you cannot miss.' : 'Plan the next task, build the bigger dream, and remember the dates that matter.'
+  const sectionTitle = section === 'tasks' ? 'to do & deadlines' : section === 'events' ? 'important dates' : section === 'planner' ? 'planner notebook' : 'planning hub'
+  const sectionDescription = section === 'tasks' ? 'Turn every deadline into a next step you can actually start.' : section === 'events' ? 'Keep competitions, exams, project dates, and important moments in sight.' : section === 'planner' ? 'One notebook for tasks, deadlines, and the dates you cannot miss.' : 'Plan the next task and remember the dates that matter.'
 
-  if (section === 'tasks' || section === 'planner') return <TaskNotebook user={user} data={data} showEvents={section === 'planner'} loaded={loaded} openTasks={openTasks} subjects={subjects} taskTitle={taskTitle} taskSubject={taskSubject} taskDue={taskDue} taskMinutes={taskMinutes} taskPriority={taskPriority} eventTitle={eventTitle} eventDate={eventDate} eventType={eventType} setTaskTitle={setTaskTitle} setTaskSubject={setTaskSubject} setTaskDue={setTaskDue} setTaskMinutes={setTaskMinutes} setTaskPriority={setTaskPriority} setEventTitle={setEventTitle} setEventDate={setEventDate} setEventType={setEventType} addTask={addTask} addEvent={addEvent} toggleTask={toggleTask} deleteTask={deleteTask} deleteEvent={deleteEvent} workspaceId={workspaceId} workspace={activeWorkspace} workspaces={workspaces} onWorkspaceChange={onWorkspaceChange} onCreateWorkspace={onCreateWorkspace} onJoinWorkspace={onJoinWorkspace} onLeaveWorkspace={onLeaveWorkspace} onDeleteWorkspace={onDeleteWorkspace} workspaceMembers={workspaceMembers} workspaceMembersLoading={workspaceMembersLoading} workspaceLoading={workspaceLoading} workspaceError={workspaceError} isShared={isShared} onUserChange={onUserChange} />
+  if (section === 'tasks' || section === 'planner') return <>
+    <TaskNotebook user={user} data={data} showEvents={section === 'planner'} loaded={loaded} openTasks={openTasks} subjects={subjects} rhythmPlan={rhythmPlan} taskTitle={taskTitle} taskSubject={taskSubject} taskDue={taskDue} taskMinutes={taskMinutes} taskPriority={taskPriority} taskHint={taskHint} eventTitle={eventTitle} eventDate={eventDate} eventType={eventType} setTaskTitle={setTaskTitle} setTaskSubject={setTaskSubject} setTaskDue={setTaskDue} setTaskMinutes={setTaskMinutes} setTaskPriority={setTaskPriority} setEventTitle={setEventTitle} setEventDate={setEventDate} setEventType={setEventType} addTask={addTask} addEvent={addEvent} toggleTask={toggleTask} deleteTask={deleteTask} deleteEvent={deleteEvent} workspaceId={workspaceId} workspace={activeWorkspace} workspaces={workspaces} onWorkspaceChange={onWorkspaceChange} onCreateWorkspace={onCreateWorkspace} onJoinWorkspace={onJoinWorkspace} onLeaveWorkspace={onLeaveWorkspace} onDeleteWorkspace={onDeleteWorkspace} workspaceMembers={workspaceMembers} workspaceMembersLoading={workspaceMembersLoading} workspaceLoading={workspaceLoading} workspaceError={workspaceError} onUserChange={onUserChange} />
+  </>
 
 
   return (
@@ -270,14 +293,6 @@ export function PlannerHub({
           </div>
         </article>
         </>}
-
-        {(section === 'all' || section === 'goals') && <article className="paper-card planner-card goals-card">
-          <div className="planner-card-heading"><div><p className="eyebrow">the bigger picture</p><h3>life goals</h3></div><Flag className="size-5" /></div>
-          <div className="planner-form goal-form"><input aria-label="Life goal" value={goalTitle} placeholder="e.g. Get into BBA" onChange={(event) => setGoalTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') addGoal() }} /><div className="form-row"><input aria-label="Goal target date" type="date" value={goalDate} onChange={(event) => setGoalDate(event.target.value)} /><button className="planner-add" onClick={addGoal}><Plus className="size-4" /> add goal</button></div></div>
-          <div className="goal-list">
-            {data.goals.length ? data.goals.map((goal) => { const steps = data.steps.filter((step) => step.goalId === goal.id).sort((a, b) => a.orderIndex - b.orderIndex); const complete = steps.filter((step) => step.completed).length; const progress = steps.length ? Math.round((complete / steps.length) * 100) : 0; return <div className="goal-item" key={goal.id}><div className="goal-title-row"><div><strong>{goal.title}</strong><span>{goal.targetDate ? `target ${formatDate(goal.targetDate)}` : 'set a target date when ready'}</span></div><button aria-label={`Delete ${goal.title}`} className="delete-button" onClick={() => deleteGoal(goal.id)}><Trash2 className="size-3.5" /></button></div><div className="goal-progress"><span style={{ width: `${progress}%` }} /></div><p>{complete}/{steps.length} milestones · {progress}% complete</p>{steps.map((step) => <button className={`goal-step ${step.completed ? 'done' : ''}`} key={step.id} onClick={() => toggleStep(step.id)}>{step.completed ? <Check className="size-3.5" /> : <ChevronRight className="size-3.5" />}{step.title}</button>)}<div className="step-adder"><input aria-label={`New milestone for ${goal.title}`} value={stepDrafts[goal.id] ?? ''} placeholder="Add a small next step" onChange={(event) => setStepDrafts((previous) => ({ ...previous, [goal.id]: event.target.value }))} onKeyDown={(event) => { if (event.key === 'Enter') addStep(goal.id) }} /><button onClick={() => addStep(goal.id)}>add</button></div></div> }) : <p className="planner-empty">A goal is a direction, not a deadline. Add one, then break it into tiny milestones.</p>}
-          </div>
-        </article>}
 
         {(section === 'all' || section === 'events') && <article className="paper-card planner-card events-card">
           <div className="planner-card-heading"><div><p className="eyebrow">don&apos;t miss it</p><h3>important dates</h3></div><CalendarClock className="size-5" /></div>

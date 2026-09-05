@@ -1,5 +1,5 @@
-import { GoalsGardenPage } from '../../components/goals-garden-page'
+import { RhythmPage } from '../../components/rhythm-page'
 
 export default function GoalsPage() {
-  return <GoalsGardenPage />
+  return <RhythmPage />
 }

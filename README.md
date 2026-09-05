@@ -58,7 +58,21 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 ```
 
 ### 3. Setup Supabase Database Schema
-Run the SQL script in `supabase/schema.sql` inside your [Supabase SQL Editor](https://supabase.com/dashboard).
+Run the SQL migrations in your [Supabase SQL Editor](https://supabase.com/dashboard) in this order:
+
+1. `supabase/001_schema.sql`
+2. `supabase/002_line_integration.sql`
+3. `supabase/003_ontology_v0.sql`
+4. `supabase/004_ontology_v1_subject_refs.sql`
+5. `supabase/005_task_intelligence_v0.sql`
+6. `supabase/006_adaptive_planner_v0.sql`
+7. `supabase/007_personal_memory_v0.sql`
+8. `supabase/008_personal_ontology_snapshot_v1.sql`
+9. `supabase/009_reminder_delivery_v0.sql`
+10. `supabase/010_personal_memory_v1_lifecycle.sql`
+11. `supabase/011_manager_feedback_v0.sql`
+
+The last four migrations add the versioned per-account Personal Ontology snapshot, idempotent LINE delivery protection, private-memory lifecycle, and AI action-feedback loop used by the AI and reminder system.
 
 ### 4. Run Development Server
 ```bash

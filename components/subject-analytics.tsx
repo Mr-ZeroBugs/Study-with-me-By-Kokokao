@@ -2,10 +2,17 @@
 
 import { useMemo, useState } from 'react'
 import { BarChart3, BookOpen, CalendarRange, Check, Clock3 } from 'lucide-react'
-import { getLocalDateKey, type SubjectDayLogs } from '../lib/storage'
+import { type SubjectDayLogs } from '../lib/storage'
 import type { StatsRange } from './stats-insights'
 
 const subjectColors = ['#ee8d92', '#8fcdb0', '#f1c965', '#b998d0', '#e7a77d', '#86b9d6', '#db9bb4']
+
+export type CanonicalSubjectAnalytics = {
+  id: string
+  name: string
+  days: SubjectDayLogs[string]
+  groups: string[]
+}
 
 function formatMinutes(minutes: number) {
   if (minutes < 60) return `${minutes}m`
@@ -27,24 +34,51 @@ function dateIsInRange(dateKey: string, range: StatsRange) {
   return date >= start && date <= today
 }
 
-export function SubjectAnalytics({ subjectLogs, subjects, range }: { subjectLogs: SubjectDayLogs; subjects: string[]; range: StatsRange }) {
+export function SubjectAnalytics({ subjectLogs, subjects, canonicalSubjects = [], range }: { subjectLogs: SubjectDayLogs; subjects: string[]; canonicalSubjects?: CanonicalSubjectAnalytics[]; range: StatsRange }) {
   const [activeSubject, setActiveSubject] = useState<string | null>(null)
+  const [view, setView] = useState<'subjects' | 'groups'>('subjects')
   const activeRange = range
+  const isCanonical = canonicalSubjects.length > 0
 
   const breakdown = useMemo(() => {
+    if (isCanonical) {
+      const rows = canonicalSubjects.map((subject, index) => ({
+        id: subject.id,
+        subject: subject.name,
+        groups: subject.groups,
+        minutes: Object.entries(subject.days).reduce(
+          (sum, [dateKey, minutes]) => sum + (dateIsInRange(dateKey, activeRange) ? minutes : 0),
+          0,
+        ),
+        color: subjectColors[index % subjectColors.length],
+      })).filter((item) => item.minutes > 0)
+      if (view === 'subjects') return rows.sort((a, b) => b.minutes - a.minutes)
+      const grouped = new Map<string, { id: string; subject: string; groups: string[]; minutes: number; color: string }>()
+      for (const row of rows) {
+        const names = row.groups.length ? row.groups : ['Un-grouped']
+        for (const name of names) {
+          const current = grouped.get(name) ?? { id: `group:${name}`, subject: name, groups: [], minutes: 0, color: subjectColors[grouped.size % subjectColors.length] }
+          current.minutes += row.minutes
+          grouped.set(name, current)
+        }
+      }
+      return [...grouped.values()].sort((a, b) => b.minutes - a.minutes)
+    }
     const names = Array.from(new Set([...subjects, ...Object.keys(subjectLogs)]))
     return names.map((subject, index) => ({
+      id: subject,
       subject,
+      groups: [],
       minutes: Object.entries(subjectLogs[subject] ?? {}).reduce(
         (sum, [dateKey, minutes]) => sum + (dateIsInRange(dateKey, activeRange) ? minutes : 0),
         0
       ),
       color: subjectColors[index % subjectColors.length],
     })).filter((item) => item.minutes > 0).sort((a, b) => b.minutes - a.minutes)
-  }, [activeRange, subjectLogs, subjects])
+  }, [activeRange, canonicalSubjects, isCanonical, subjectLogs, subjects, view])
 
   const total = breakdown.reduce((sum, item) => sum + item.minutes, 0)
-  const selected = breakdown.find((item) => item.subject === activeSubject) ?? breakdown[0]
+  const selected = breakdown.find((item) => item.id === activeSubject) ?? breakdown[0]
   let cursor = 0
   const gradient = total
     ? breakdown.map((item) => {
@@ -64,7 +98,7 @@ export function SubjectAnalytics({ subjectLogs, subjects, range }: { subjectLogs
           <h2 id="subject-analytics-heading" className="font-display text-2xl font-bold">subject breakdown</h2>
           <p className="mt-2 text-sm text-muted-ink">See which subjects are getting your best energy.</p>
         </div>
-        <span className="subject-range-note">{rangeLabel}</span>
+        <div className="flex items-center gap-2"><span className="subject-range-note">{rangeLabel}</span>{isCanonical && <div className="flex rounded-full border border-line p-0.5 text-[10px]"><button className={`rounded-full px-2 py-1 ${view === 'subjects' ? 'bg-paper text-ink shadow-sm' : 'text-muted-ink'}`} onClick={() => { setView('subjects'); setActiveSubject(null) }}>subjects</button><button className={`rounded-full px-2 py-1 ${view === 'groups' ? 'bg-paper text-ink shadow-sm' : 'text-muted-ink'}`} onClick={() => { setView('groups'); setActiveSubject(null) }}>groups</button></div>}</div>
       </div>
 
       {total > 0 ? <div className="subject-analytics-body">
@@ -77,8 +111,8 @@ export function SubjectAnalytics({ subjectLogs, subjects, range }: { subjectLogs
         <div className="subject-list">
           {breakdown.map((item) => {
             const percentage = Math.round((item.minutes / total) * 100)
-            const isActive = selected?.subject === item.subject
-            return <button key={item.subject} aria-pressed={isActive} className={`subject-row ${isActive ? 'active' : ''}`} onClick={() => setActiveSubject(item.subject)}>
+            const isActive = selected?.id === item.id
+            return <button key={item.id} aria-pressed={isActive} className={`subject-row ${isActive ? 'active' : ''}`} onClick={() => setActiveSubject(item.id)}>
               <span className="subject-swatch" style={{ background: item.color }} />
               <span className="subject-row-name">{item.subject}</span>
               <span className="subject-row-time">{formatMinutes(item.minutes)}</span>

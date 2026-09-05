@@ -1,9 +1,13 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { Activity, CalendarDays, ChevronLeft, ChevronRight, Clock3, Flame, Pause, Play, Sparkles } from 'lucide-react'
-import { getLocalDateKey, type DayLog, type StudyInterval } from '../lib/storage'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
+import { Activity, AlertTriangle, ArrowUpRight, CalendarDays, ChevronLeft, ChevronRight, Clock3, Flame, Lightbulb, Pause, Play, Sparkles } from 'lucide-react'
+import { getLocalDateKey, type DayLog, type StudyInterval, type SubjectDayLogs, type SuspiciousStudyDay } from '../lib/storage'
 import { getIntensityThreshold } from '../lib/theme'
+import type { PlannerTask } from '../lib/planner-storage'
+import { createActionableInsights } from '../lib/insight-engine'
+import type { KokoRhythmPlan } from '../lib/rhythm-storage'
 
 export type StatsRange = 'days' | 'weeks' | 'month' | 'year' | 'all'
 
@@ -147,11 +151,13 @@ function intervalTimestamps(interval: StudyInterval) {
   return { start, end }
 }
 
-export function StatsInsights({ logs, intervals, range, onRangeChange }: { logs: DayLog; intervals: StudyInterval[]; range: StatsRange; onRangeChange: (range: StatsRange) => void }) {
+export function StatsInsights({ logs, intervals, subjectLogs, tasks, rhythmPlan = null, range, onRangeChange, suspiciousDays = [], onRepairDay }: { logs: DayLog; intervals: StudyInterval[]; subjectLogs: SubjectDayLogs; tasks: PlannerTask[]; rhythmPlan?: KokoRhythmPlan | null; range: StatsRange; onRangeChange: (range: StatsRange) => void; suspiciousDays?: SuspiciousStudyDay[]; onRepairDay?: (incident: SuspiciousStudyDay, minutes: number) => Promise<void> }) {
   const [referenceDate, setReferenceDate] = useState(() => new Date(2000, 0, 1, 12))
   const [selectedDateKey, setSelectedDateKey] = useState('2000-01-01')
   const [calendarDate, setCalendarDate] = useState(() => new Date(2000, 0, 1, 12))
   const [highThreshold, setHighThreshold] = useState(90) // updated from localStorage on mount
+  const [repairMinutes, setRepairMinutes] = useState<Record<string, number>>({})
+  const [repairingDay, setRepairingDay] = useState('')
 
   useEffect(() => {
     const current = new Date()
@@ -183,8 +189,11 @@ export function StatsInsights({ logs, intervals, range, onRangeChange }: { logs:
   }, {}), [intervals])
 
   const allDateKeys = useMemo(() => Array.from(new Set([...Object.keys(logs), ...Object.keys(intervalMinutesByDay)])), [intervalMinutesByDay, logs])
-  const minutesForDate = (key: string) => Math.max(logs[key] ?? 0, Math.round(intervalMinutesByDay[key] ?? 0))
-  const series = useMemo(() => getRangeSeries(range, referenceDate, minutesForDate, allDateKeys), [allDateKeys, intervalMinutesByDay, logs, range, referenceDate])
+  // Daily logs are the reconciled source of truth shared with Focus calendar.
+  // Intervals only describe *when* studying happened; they must never restore
+  // a quarantined/corrected total by competing with the daily aggregate.
+  const minutesForDate = useCallback((key: string) => Math.max(0, Math.round(logs[key] ?? 0)), [logs])
+  const series = useMemo(() => getRangeSeries(range, referenceDate, minutesForDate, allDateKeys), [allDateKeys, minutesForDate, range, referenceDate])
   const selectedRangeKeys = useMemo(() => range === 'all' ? allDateKeys : Array.from(new Set(series.flatMap((point) => point.dateKeys))), [allDateKeys, range, series])
   const selectedRangeKeySet = useMemo(() => new Set(selectedRangeKeys), [selectedRangeKeys])
   const totalMinutes = selectedRangeKeys.reduce((sum, key) => sum + minutesForDate(key), 0)
@@ -195,15 +204,20 @@ export function StatsInsights({ logs, intervals, range, onRangeChange }: { logs:
     return Math.max(max, interval.durationSeconds)
   }, 0)
 
+  const suspiciousDateKeys = useMemo(() => new Set(suspiciousDays.flatMap((incident) => incident.relatedDateKeys)), [suspiciousDays])
   const selectedDayIntervals = useMemo(() => {
-    const dayStart = dateFromKey(selectedDateKey).getTime()
-    const dayEnd = dayStart + DAY_MS
+    // Do not draw an exact clock position from evidence we already know came
+    // from a runaway timer. The reviewed total remains visible above.
+    if (suspiciousDateKeys.has(selectedDateKey)) return []
+    const [y, m, d] = selectedDateKey.split('-').map(Number)
+    const dayStart = new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0).getTime()
+    const dayEnd   = new Date(y, (m || 1) - 1, d || 1, 23, 59, 59, 999).getTime()
     return intervals.map((interval) => {
       const timestamps = intervalTimestamps(interval)
       if (!timestamps || timestamps.end <= dayStart || timestamps.start >= dayEnd) return null
       return { ...timestamps, mode: interval.mode, start: Math.max(dayStart, timestamps.start), end: Math.min(dayEnd, timestamps.end) }
     }).filter((item): item is { start: number; end: number; mode: StudyInterval['mode'] } => Boolean(item)).sort((a, b) => a.start - b.start)
-  }, [intervals, selectedDateKey])
+  }, [intervals, selectedDateKey, suspiciousDateKeys])
 
   const timelineBlocks = useMemo(() => {
     const blocks: TimelineBlock[] = []
@@ -242,6 +256,7 @@ export function StatsInsights({ logs, intervals, range, onRangeChange }: { logs:
   const selectedDayLabel = dateLabel(selectedDateKey)
   const rangeLabel = rangeName(range)
   const calendarWide = range === 'year' || range === 'all'
+  const actionableInsights = useMemo(() => createActionableInsights({ now: referenceDate, logs, intervals, subjectLogs, tasks, rhythmPlan }), [intervals, logs, referenceDate, rhythmPlan, subjectLogs, tasks])
   const calendarPeriodLabel = useMemo(() => {
     if (range === 'month') return monthLabel(calendarDate)
     if (range === 'year') return String(calendarDate.getFullYear())
@@ -303,11 +318,35 @@ export function StatsInsights({ logs, intervals, range, onRangeChange }: { logs:
         </div>
       </div>
 
+      {suspiciousDays.length > 0 && (
+        <section className="stats-repair-card" aria-label="Review unusual study time">
+          <div className="stats-repair-intro">
+            <span><AlertTriangle className="size-4" /></span>
+            <div><strong>Koko found time that looks like a forgotten timer.</strong><p>Related days are treated as one incident. A safe estimate is shown everywhere until you enter the actual total; repairing it updates calendar, totals, subjects, and timeline evidence together.</p></div>
+          </div>
+          <div className="stats-repair-days">
+            {suspiciousDays.map((day) => {
+              const value = repairMinutes[day.dateKey] ?? day.suggestedMinutes
+              return <div className="stats-repair-row" key={day.dateKey}>
+                <div><strong>{day.relatedDateKeys.length > 1 ? `${dateLabel(day.dateKey)} – ${dateLabel(day.relatedDateKeys.at(-1) ?? day.dateKey)}` : dateLabel(day.dateKey)}</strong><span>one related incident across {day.relatedDateKeys.length} day{day.relatedDateKeys.length === 1 ? '' : 's'} · recorded {formatMinutes(day.recordedMinutes)}</span></div>
+                <label><span>actual estimate</span><input type="number" min="0" max="1440" step="5" value={value} onChange={(event) => setRepairMinutes((current) => ({ ...current, [day.dateKey]: Math.max(0, Number(event.target.value) || 0) }))} /><small>min</small></label>
+                <button disabled={repairingDay === day.dateKey || !onRepairDay} onClick={async () => { if (!onRepairDay) return; setRepairingDay(day.dateKey); try { await onRepairDay(day, value) } finally { setRepairingDay('') } }}>{repairingDay === day.dateKey ? 'repairing…' : 'repair incident'}</button>
+              </div>
+            })}
+          </div>
+        </section>
+      )}
+
       <div className="stats-kpi-grid">
         <div className="paper-card stats-kpi total"><span className="stats-kpi-icon"><Clock3 className="size-4" /></span><p className="eyebrow">{rangeLabel}</p><strong>{formatMinutes(totalMinutes)}</strong><span>total study time</span></div>
         <div className="paper-card stats-kpi longest"><span className="stats-kpi-icon"><Activity className="size-4" /></span><p className="eyebrow">open-ended focus</p><strong>{maxFocusSeconds ? formatSeconds(maxFocusSeconds) : '—'}</strong><span>{maxFocusSeconds ? 'max uninterrupted flow' : 'tracked from new flow sessions'}</span></div>
         <div className="paper-card stats-kpi active-days"><span className="stats-kpi-icon"><Flame className="size-4" /></span><p className="eyebrow">showing up</p><strong>{activeDays}</strong><span>{activeDays === 1 ? 'active day' : 'active days'}</span></div>
       </div>
+
+      {actionableInsights.length > 0 && <section className="stats-reflection" aria-label="What your study data is suggesting">
+        <div className="stats-reflection-heading"><span><Lightbulb className="size-4" /></span><div><p className="eyebrow">a useful read</p><h3>what your rhythm is suggesting</h3></div></div>
+        <div className="stats-reflection-list">{actionableInsights.map((insight) => <article className="stats-reflection-item" key={insight.id}><div><strong>{insight.title}</strong><p>{insight.detail}</p></div>{insight.action && <Link href={insight.action.href}>{insight.action.label}<ArrowUpRight className="size-3" /></Link>}</article>)}</div>
+      </section>}
 
       <div className={`stats-detail-grid ${calendarWide ? 'calendar-wide' : ''}`}>
         <section className="paper-card stats-timeline-card" aria-labelledby="timeline-heading">
@@ -316,10 +355,10 @@ export function StatsInsights({ logs, intervals, range, onRangeChange }: { logs:
           {timelineBlocks.length ? <div className="stats-timeline-chart"><svg className="stats-timeline-svg" width="960" height="220" viewBox="0 0 960 220" preserveAspectRatio="none" role="img" aria-label={`Study and pause timeline for ${selectedDayLabel}`}>
             <rect x="52" y="38" width="874" height="116" rx="14" fill="#fffaf2" />
             <text x="52" y="25" className="timeline-axis-title">focus timeline</text>
-            {timelineBlocks.map((block, index) => { const dayStart = dateFromKey(selectedDateKey).getTime(); const x = 52 + ((block.start - dayStart) / DAY_MS) * 874; const width = Math.max(2, ((block.end - block.start) / DAY_MS) * 874); return block.kind === 'study' ? <rect key={`${block.kind}-${index}`} x={x} y="63" width={width} height="57" rx="9" className="timeline-study-block" /> : <rect key={`${block.kind}-${index}`} x={x} y="126" width={width} height="12" rx="6" className="timeline-break-block" /> })}
+            {timelineBlocks.map((block, index) => { const [_y, _m, _d] = selectedDateKey.split('-').map(Number); const dayStart = new Date(_y, (_m || 1) - 1, _d || 1, 0, 0, 0, 0).getTime(); const x = 52 + ((block.start - dayStart) / DAY_MS) * 874; const width = Math.max(2, ((block.end - block.start) / DAY_MS) * 874); return block.kind === 'study' ? <rect key={`${block.kind}-${index}`} x={x} y="63" width={width} height="57" rx="9" className="timeline-study-block" /> : <rect key={`${block.kind}-${index}`} x={x} y="126" width={width} height="12" rx="6" className="timeline-break-block" /> })}
             <line x1="52" x2="926" y1="154" y2="154" className="timeline-axis-line" />
             {[0, 3, 6, 9, 12, 15, 18, 21, 24].map((hour) => { const x = 52 + (hour / 24) * 874; return <g key={hour}><line x1={x} x2={x} y1="150" y2="160" className="timeline-tick" /><text x={x} y="181" textAnchor={hour === 0 ? 'start' : hour === 24 ? 'end' : 'middle'} className="timeline-hour">{hour === 24 ? 'midnight' : `${String(hour).padStart(2, '0')}:00`}</text></g> })}
-          </svg><div className="timeline-legend"><span><i className="timeline-study-swatch" /><Play className="size-3" /> study</span><span><i className="timeline-break-swatch" /><Pause className="size-3" /> pause / gap</span></div></div> : <div className="stats-timeline-empty"><Activity className="stats-timeline-empty-icon size-5" /><strong>No start/stop segments for this day yet.</strong><p>Run the timer, pause it, and this timeline will draw your real rhythm here.</p></div>}
+          </svg><div className="timeline-legend"><span><i className="timeline-study-swatch" /><Play className="size-3" /> study</span><span><i className="timeline-break-swatch" /><Pause className="size-3" /> pause / gap</span></div></div> : <div className="stats-timeline-empty"><Activity className="stats-timeline-empty-icon size-5" /><strong>{suspiciousDateKeys.has(selectedDateKey) ? 'Timeline hidden while this timer incident is under review.' : selectedDayMinutes > 0 ? 'Total repaired; exact start and stop times are unavailable.' : 'No start/stop segments for this day yet.'}</strong><p>{suspiciousDateKeys.has(selectedDateKey) ? 'Repair the related incident once and every affected view will update together.' : selectedDayMinutes > 0 ? 'The study total is still included in your calendar and statistics.' : 'Run the timer, pause it, and this timeline will draw your real rhythm here.'}</p></div>}
         </section>
 
         <section className={`paper-card stats-calendar-card ${calendarWide ? 'calendar-wide' : ''}`} aria-labelledby="stats-calendar-heading">

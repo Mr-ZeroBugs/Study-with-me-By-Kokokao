@@ -20,6 +20,13 @@ import {
   Clock,
   BookOpen,
   LogOut,
+  Brain,
+  ShieldCheck,
+  CheckCircle,
+  XCircle,
+  Pencil,
+  Trash2,
+  Save,
 } from 'lucide-react'
 import {
   getStoredTheme,
@@ -29,16 +36,39 @@ import {
   AppTheme,
 } from '@/lib/theme'
 import { supabase } from '@/lib/supabase'
+import {
+  loadPersonalMemory,
+  proposePersonalMemory,
+  reviewPersonalMemory,
+  savePersonalMemorySettings,
+  updatePersonalMemory,
+  deletePersonalMemory,
+} from '@/lib/personal-memory-client'
+import type { PersonalMemoryItem, PersonalMemorySnapshot } from '@/lib/personal-memory'
+import type { User } from '@supabase/supabase-js'
 
 interface SettingsModalProps {
   isOpen: boolean
   onClose: () => void
-  user?: any
+  user?: User | null
   onOpenAuth?: () => void
 }
 
+function memoryTypeLabel(type: PersonalMemoryItem['memoryType']) {
+  if (type === 'observed') return 'observed pattern'
+  if (type === 'temporary') return 'temporary note'
+  return 'your note'
+}
+
+function expiryLabel(expiresAt?: string) {
+  if (!expiresAt) return null
+  const value = new Date(expiresAt)
+  if (Number.isNaN(value.getTime())) return null
+  return `expires ${value.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`
+}
+
 export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsModalProps) {
-  const [activeTab, setActiveTab] = useState<'theme' | 'line' | 'account'>('theme')
+  const [activeTab, setActiveTab] = useState<'theme' | 'line' | 'memory' | 'account'>('theme')
   const [currentTheme, setCurrentTheme] = useState<AppTheme>('cozy')
   const [intensityMinutes, setIntensityMinutes] = useState(90)
 
@@ -48,6 +78,16 @@ export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsMod
   const [loading, setLoading] = useState(false)
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [memory, setMemory] = useState<PersonalMemorySnapshot | null>(null)
+  const [memoryLoading, setMemoryLoading] = useState(false)
+  const [memoryError, setMemoryError] = useState<string | null>(null)
+  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null)
+  const [editingMemoryContent, setEditingMemoryContent] = useState('')
+  const [editingMemoryKind, setEditingMemoryKind] = useState<'preference' | 'learning'>('preference')
+  const [newMemoryContent, setNewMemoryContent] = useState('')
+  const [newMemoryKind, setNewMemoryKind] = useState<'preference' | 'learning'>('preference')
+  const [newMemoryType, setNewMemoryType] = useState<'explicit' | 'temporary'>('explicit')
+  const [newMemoryExpiry, setNewMemoryExpiry] = useState('')
 
   const LINE_BOT_ID = '@277sabim'
   const LINE_ADD_URL = 'https://line.me/R/ti/p/@277sabim'
@@ -57,13 +97,19 @@ export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsMod
       document.body.style.overflow = 'hidden'
       setCurrentTheme(getStoredTheme())
       setIntensityMinutes(getIntensityThreshold())
-      if (user) checkLineStatus()
+      if (user) {
+        checkLineStatus()
+        void refreshMemory()
+      }
     } else {
       document.body.style.overflow = 'unset'
     }
     return () => {
       document.body.style.overflow = 'unset'
     }
+  // Opening the modal or switching accounts is the refresh boundary. The
+  // local async function identities must not turn this into a render loop.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, user])
 
   const getAuthToken = async () => {
@@ -91,6 +137,98 @@ export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsMod
       console.error('Failed to check LINE status:', err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const refreshMemory = async () => {
+    if (!user) return
+    setMemoryLoading(true)
+    setMemoryError(null)
+    try {
+      setMemory(await loadPersonalMemory())
+    } catch (err: any) {
+      setMemoryError(err.message || 'Could not load personal memory.')
+    } finally {
+      setMemoryLoading(false)
+    }
+  }
+
+  const handleMemorySetting = async (nextEnabled: boolean, nextApproval: boolean) => {
+    if (!memory) return
+    const previous = memory
+    setMemory({ ...memory, settings: { enabled: nextEnabled, writeApprovalRequired: nextApproval } })
+    try {
+      await savePersonalMemorySettings(nextEnabled, nextApproval)
+    } catch (err: any) {
+      setMemory(previous)
+      setMemoryError(err.message || 'Could not update memory settings.')
+    }
+  }
+
+  const handleMemoryReview = async (id: string, decision: 'approve' | 'reject') => {
+    if (!memory) return
+    setMemoryLoading(true)
+    setMemoryError(null)
+    try {
+      await reviewPersonalMemory(id, decision)
+      await refreshMemory()
+    } catch (err: any) {
+      setMemoryError(err.message || 'Could not review this memory.')
+      setMemoryLoading(false)
+    }
+  }
+
+  const startEditingMemory = (item: NonNullable<PersonalMemorySnapshot['active']>[number]) => {
+    setEditingMemoryId(item.id)
+    setEditingMemoryContent(item.content)
+    setEditingMemoryKind(item.kind)
+    setMemoryError(null)
+  }
+
+  const saveEditedMemory = async () => {
+    if (!editingMemoryId) return
+    setMemoryLoading(true)
+    setMemoryError(null)
+    try {
+      await updatePersonalMemory(editingMemoryId, editingMemoryKind, editingMemoryContent)
+      setEditingMemoryId(null)
+      await refreshMemory()
+    } catch (err: any) {
+      setMemoryError(err.message || 'Could not update this memory.')
+      setMemoryLoading(false)
+    }
+  }
+
+  const removeMemory = async (id: string) => {
+    setMemoryLoading(true)
+    setMemoryError(null)
+    try {
+      await deletePersonalMemory(id)
+      if (editingMemoryId === id) setEditingMemoryId(null)
+      await refreshMemory()
+    } catch (err: any) {
+      setMemoryError(err.message || 'Could not delete this memory.')
+      setMemoryLoading(false)
+    }
+  }
+
+  const addPersonalMemory = async () => {
+    const content = newMemoryContent.trim()
+    if (!content) return
+    setMemoryLoading(true)
+    setMemoryError(null)
+    try {
+      const expiresAt = newMemoryType === 'temporary' && newMemoryExpiry
+        ? new Date(`${newMemoryExpiry}T23:59:59`).toISOString()
+        : undefined
+      await proposePersonalMemory(newMemoryKind, content, { memoryType: newMemoryType, expiresAt })
+      setNewMemoryContent('')
+      setNewMemoryExpiry('')
+      setNewMemoryType('explicit')
+      await refreshMemory()
+    } catch (err: any) {
+      setMemoryError(err.message || 'Could not save this memory.')
+      setMemoryLoading(false)
     }
   }
 
@@ -201,6 +339,7 @@ export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsMod
           {[
             { id: 'theme', label: 'Theme', icon: Palette },
             { id: 'line', label: 'LINE Bot', icon: MessageCircle },
+            { id: 'memory', label: 'Memory', icon: Brain },
             { id: 'account', label: 'Account', icon: UserIcon },
           ].map(({ id, label, icon: Icon }) => (
             <button
@@ -444,7 +583,78 @@ export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsMod
           </div>
         )}
 
-        {/* Tab 3: ACCOUNT */}
+        {/* Tab 3: PERSONAL MEMORY */}
+        {activeTab === 'memory' && (
+          <div className="space-y-4 pt-1">
+            {!user ? (
+              <div className="py-5 text-center">
+                <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-2xl bg-[#fff0e8] text-[#a2605a]"><Brain className="size-6" /></div>
+                <h4 className="font-display text-base font-bold text-ink mb-1">Memory belongs to you</h4>
+                <p className="text-xs text-muted-ink mb-5 leading-relaxed">Sign in to keep a small, private set of study preferences and learning patterns.</p>
+                {onOpenAuth && <button onClick={() => { onClose(); onOpenAuth() }} className="main-button w-full justify-center text-xs py-2.5">Sign in to use memory</button>}
+              </div>
+            ) : memoryLoading && !memory ? (
+              <div className="py-10 text-center text-xs text-muted-ink">Loading your private memory…</div>
+            ) : memoryError && !memory ? (
+              <div className="rounded-2xl border border-[#efb5ae] bg-[#fff0e8] p-4 text-left">
+                <p className="text-xs font-semibold text-[#a2605a]">Personal memory isn&apos;t available yet.</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-muted-ink">{memoryError}</p>
+                <button onClick={refreshMemory} className="mt-3 text-xs font-semibold text-ink underline">Try again</button>
+              </div>
+            ) : memory ? (
+              <>
+                <div className="rounded-2xl border border-line bg-paper/60 p-4 text-left">
+                  <div className="flex items-start gap-3">
+                    <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#e5f4e9] text-[#447e68]"><ShieldCheck className="size-4.5" /></div>
+                    <div>
+                      <p className="text-sm font-bold text-ink">Personal, not shared</p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-muted-ink">Koko only uses compact notes you approve—such as preferred study style or a useful learning pattern. Team Spaces and raw task text are never added here.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-line bg-paper/60 p-4 text-left space-y-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div><p className="text-xs font-bold text-ink">Use personal memory</p><p className="mt-0.5 text-[11px] text-muted-ink">Let Koko use approved notes in private help.</p></div>
+                    <button type="button" role="switch" aria-checked={memory.settings.enabled} onClick={() => handleMemorySetting(!memory.settings.enabled, memory.settings.writeApprovalRequired)} className={`relative h-6 w-11 shrink-0 rounded-full transition ${memory.settings.enabled ? 'bg-[#5c9774]' : 'bg-black/15'}`}><span className={`absolute top-1 size-4 rounded-full bg-white shadow-sm transition ${memory.settings.enabled ? 'left-6' : 'left-1'}`} /></button>
+                  </div>
+                  <div className="flex items-center justify-between gap-4 border-t border-line/70 pt-4">
+                    <div><p className="text-xs font-bold text-ink">Ask before saving</p><p className="mt-0.5 text-[11px] text-muted-ink">New AI notes wait for your approval.</p></div>
+                    <button type="button" role="switch" aria-checked={memory.settings.writeApprovalRequired} onClick={() => handleMemorySetting(memory.settings.enabled, !memory.settings.writeApprovalRequired)} className={`relative h-6 w-11 shrink-0 rounded-full transition ${memory.settings.writeApprovalRequired ? 'bg-[#5c9774]' : 'bg-black/15'}`}><span className={`absolute top-1 size-4 rounded-full bg-white shadow-sm transition ${memory.settings.writeApprovalRequired ? 'left-6' : 'left-1'}`} /></button>
+                  </div>
+                </div>
+
+                <section className="rounded-2xl border border-line bg-paper/60 p-4 text-left">
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <div><p className="text-xs font-bold text-ink">Add a note you want Koko to remember</p><p className="mt-0.5 text-[11px] leading-relaxed text-muted-ink">Keep it useful for studying. You stay in control of every note.</p></div>
+                    <Brain className="mt-0.5 size-4 shrink-0 text-[#447e68]" />
+                  </div>
+                  <textarea value={newMemoryContent} onChange={(event) => setNewMemoryContent(event.target.value)} maxLength={360} placeholder="e.g. I prefer a short first step when a task feels heavy." className="min-h-[72px] w-full resize-y rounded-xl border border-line bg-paper p-2.5 text-xs text-ink outline-none placeholder:text-muted-ink/70" />
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <select value={newMemoryKind} onChange={(event) => setNewMemoryKind(event.target.value as 'preference' | 'learning')} className="rounded-lg border border-line bg-paper px-2 py-1.5 text-[10px] text-ink"><option value="preference">preference</option><option value="learning">learning</option></select>
+                    <select value={newMemoryType} onChange={(event) => setNewMemoryType(event.target.value as 'explicit' | 'temporary')} className="rounded-lg border border-line bg-paper px-2 py-1.5 text-[10px] text-ink"><option value="explicit">keep until I remove it</option><option value="temporary">temporary</option></select>
+                    {newMemoryType === 'temporary' && <input type="date" value={newMemoryExpiry} onChange={(event) => setNewMemoryExpiry(event.target.value)} className="rounded-lg border border-line bg-paper px-2 py-1.5 text-[10px] text-ink" />}
+                    <button disabled={memoryLoading || !newMemoryContent.trim() || (newMemoryType === 'temporary' && !newMemoryExpiry)} onClick={addPersonalMemory} className="inline-flex items-center gap-1 rounded-lg bg-[#5c9774] px-2.5 py-1.5 text-[10px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"><Save className="size-3" />Save note</button>
+                  </div>
+                </section>
+
+                <p className="rounded-xl border border-dashed border-line bg-paper/35 px-3 py-2.5 text-[10px] leading-relaxed text-muted-ink">Observed patterns always show their evidence and ask first. Koko does not store sensitive health, identity, password, or private credential details as memory.</p>
+
+                <section className="text-left">
+                  <div className="mb-2 flex items-center justify-between"><p className="eyebrow">waiting for you</p><span className="text-[11px] text-muted-ink">{memory.proposed.length} proposal{memory.proposed.length === 1 ? '' : 's'}</span></div>
+                  {memory.proposed.length ? <div className="space-y-2">{memory.proposed.map((item) => <div key={item.id} className="rounded-xl border border-dashed border-line bg-paper/60 p-3"><p className="text-xs leading-relaxed text-ink">{item.content}</p><p className="mt-1.5 text-[10px] leading-relaxed text-muted-ink"><span className="font-semibold text-ink/75">{memoryTypeLabel(item.memoryType)}</span>{item.evidence ? ` · ${item.evidence}` : ''}{expiryLabel(item.expiresAt) ? ` · ${expiryLabel(item.expiresAt)}` : ''}</p><div className="mt-3 flex gap-2"><button disabled={memoryLoading} onClick={() => handleMemoryReview(item.id, 'approve')} className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-[#5c9774] px-2 py-2 text-[11px] font-semibold text-white"><CheckCircle className="size-3.5" />Approve</button><button disabled={memoryLoading} onClick={() => handleMemoryReview(item.id, 'reject')} className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg border border-line bg-paper px-2 py-2 text-[11px] font-semibold text-muted-ink"><XCircle className="size-3.5" />Not now</button></div></div>)}</div> : <div className="rounded-xl border border-dashed border-line bg-paper/40 px-3 py-4 text-center text-[11px] text-muted-ink">Nothing waiting for approval.</div>}
+                </section>
+
+                <section className="text-left">
+                  <div className="mb-2 flex items-center justify-between"><p className="eyebrow">approved memory</p><span className="text-[11px] text-muted-ink">{memory.active.length} saved</span></div>
+                  {memory.active.length ? <div className="space-y-2">{memory.active.map((item) => <div key={item.id} className="rounded-xl border border-line bg-paper/60 px-3 py-2.5">{editingMemoryId === item.id ? <><textarea value={editingMemoryContent} onChange={(event) => setEditingMemoryContent(event.target.value)} maxLength={360} className="min-h-[72px] w-full resize-y rounded-lg border border-line bg-paper p-2 text-xs text-ink outline-none" /><div className="mt-2 flex items-center gap-2"><select value={editingMemoryKind} onChange={(event) => setEditingMemoryKind(event.target.value as 'preference' | 'learning')} className="rounded-lg border border-line bg-paper px-2 py-1.5 text-[10px] text-ink"><option value="preference">preference</option><option value="learning">learning</option></select><button disabled={memoryLoading || !editingMemoryContent.trim()} onClick={saveEditedMemory} className="inline-flex items-center gap-1 rounded-lg bg-[#5c9774] px-2 py-1.5 text-[10px] font-semibold text-white"><Save className="size-3" />Save</button><button disabled={memoryLoading} onClick={() => setEditingMemoryId(null)} className="rounded-lg px-2 py-1.5 text-[10px] font-semibold text-muted-ink">Cancel</button></div></> : <><div className="flex items-start gap-2"><p className="flex-1 text-xs leading-relaxed text-ink">{item.content}</p><button aria-label="Edit memory" disabled={memoryLoading} onClick={() => startEditingMemory(item)} className="rounded-md p-1 text-muted-ink hover:bg-ink/5 hover:text-ink"><Pencil className="size-3.5" /></button><button aria-label="Delete memory" disabled={memoryLoading} onClick={() => removeMemory(item.id)} className="rounded-md p-1 text-muted-ink hover:bg-[#fff0e8] hover:text-[#a2605a]"><Trash2 className="size-3.5" /></button></div><p className="mt-1 text-[10px] uppercase tracking-[0.12em] text-muted-ink">{item.kind} · {memoryTypeLabel(item.memoryType)}{expiryLabel(item.expiresAt) ? ` · ${expiryLabel(item.expiresAt)}` : ''}</p></>}</div>)}</div> : <div className="rounded-xl border border-dashed border-line bg-paper/40 px-3 py-4 text-center text-[11px] text-muted-ink">No approved notes yet.</div>}
+                </section>
+              </>
+            ) : null}
+          </div>
+        )}
+
+        {/* Tab 4: ACCOUNT */}
         {activeTab === 'account' && (
           <div className="text-center pt-2">
             {user ? (

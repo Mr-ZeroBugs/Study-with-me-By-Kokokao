@@ -1,13 +1,14 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BookOpen, CalendarDays, Circle, Coffee, Copy, Droplets, Flower2, Heart, ListChecks, LogIn, MessageCircle, Moon, NotebookPen, Plus, Sparkles, Trash2, UsersRound, X } from 'lucide-react'
+import { CalendarDays, Circle, Coffee, Copy, Droplets, Flower2, Heart, ListChecks, LogIn, MessageCircle, Moon, NotebookPen, Plus, Sparkles, Trash2, UsersRound, X } from 'lucide-react'
 import { getLocalDateKey } from '../lib/storage'
-import type { GoalStep, LifeGoal, PlannerData, PlannerEvent, PlannerEventType, PlannerTask, SharedWorkspace, SharedWorkspaceMember, TaskPriority } from '../lib/planner-storage'
+import type { PlannerData, PlannerEvent, PlannerEventType, PlannerTask, SharedWorkspace, SharedWorkspaceMember, TaskPriority } from '../lib/planner-storage'
 import type { User } from '@supabase/supabase-js'
 import { LineConnectModal } from './line-connect-modal'
 import { AuthModal } from './auth-modal'
 import { supabase } from '../lib/supabase'
+import { rhythmRoleForSubject, type KokoRhythmPlan } from '../lib/rhythm-storage'
 
 const eventLabels: Record<PlannerEventType, string> = { competition: 'competition', project: 'project', exam: 'exam', important: 'important' }
 const NOTEBOOK_KEY = 'study_timer_task_notebook_v1'
@@ -23,11 +24,13 @@ type TaskNotebookProps = {
   loaded: boolean
   openTasks: PlannerTask[]
   subjects: string[]
+  rhythmPlan?: KokoRhythmPlan | null
   taskTitle: string
   taskSubject: string
   taskDue: string
   taskMinutes: number
   taskPriority: TaskPriority
+  taskHint?: string
   eventTitle: string
   eventDate: string
   eventType: PlannerEventType
@@ -56,7 +59,6 @@ type TaskNotebookProps = {
   workspaceMembersLoading?: boolean
   workspaceLoading?: boolean
   workspaceError?: string | null
-  isShared?: boolean
   onUserChange?: (user: User | null) => void
 }
 
@@ -66,11 +68,6 @@ type CaptureType = 'task' | 'event'
 function formatDate(dateKey: string) {
   if (!dateKey) return 'no deadline'
   return new Date(`${dateKey}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-}
-
-function goalProgress(goal: LifeGoal, steps: GoalStep[]) {
-  const goalSteps = steps.filter((step) => step.goalId === goal.id)
-  return goalSteps.length ? Math.round((goalSteps.filter((step) => step.completed).length / goalSteps.length) * 100) : 0
 }
 
 function calendarParts(year: number, month: number) {
@@ -94,11 +91,13 @@ export function TaskNotebook({
   loaded,
   openTasks,
   subjects,
+  rhythmPlan = null,
   taskTitle,
   taskSubject,
   taskDue,
   taskMinutes,
   taskPriority,
+  taskHint,
   eventTitle,
   eventDate,
   eventType,
@@ -127,7 +126,6 @@ export function TaskNotebook({
   workspaceMembersLoading = false,
   workspaceLoading = false,
   workspaceError = null,
-  isShared = false,
   onUserChange,
 }: TaskNotebookProps) {
   const [currentUser, setCurrentUser] = useState<User | null>(user ?? null)
@@ -206,7 +204,6 @@ export function TaskNotebook({
   }, [])
 
   const priorityTasks = openTasks.slice(0, 3)
-  const goals = data.goals.slice(0, 3)
   const calendar = useMemo(() => calendarParts(calendarDate.getFullYear(), calendarDate.getMonth()), [calendarDate])
   const calendarEventDays = useMemo(() => new Set(data.events.filter((event) => event.eventDate.startsWith(`${calendarDate.getFullYear()}-${String(calendarDate.getMonth() + 1).padStart(2, '0')}`)).map((event) => Number(event.eventDate.slice(-2)))), [calendarDate, data.events])
   const upcomingEvents = useMemo(() => data.events.slice().sort((a, b) => a.eventDate.localeCompare(b.eventDate)).slice(0, 5), [data.events])
@@ -214,7 +211,6 @@ export function TaskNotebook({
   const tasksByDate = useMemo(() => data.tasks.reduce<Record<string, PlannerTask[]>>((grouped, task) => { if (task.dueDate) (grouped[task.dueDate] ??= []).push(task); return grouped }, {}), [data.tasks])
   const selectedEvents = selectedDate ? eventsByDate[selectedDate] ?? [] : []
   const selectedTasks = selectedDate ? tasksByDate[selectedDate] ?? [] : []
-
   const selectCalendarDay = (dateKey: string) => {
     setSelectedDate(dateKey)
     setEventDate(dateKey)
@@ -337,14 +333,15 @@ export function TaskNotebook({
             <div className="notebook-task-form">
               {showEvents && <div className="capture-type-toggle" role="group" aria-label="Choose what to add"><span>add to planner</span><button type="button" className={captureType === 'task' ? 'active' : ''} onClick={() => setCaptureType('task')}><ListChecks className="size-3.5" /> task</button><button type="button" className={captureType === 'event' ? 'active event' : ''} onClick={() => setCaptureType('event')}><CalendarDays className="size-3.5" /> important date</button></div>}
               {captureType === 'task' || !showEvents ? <>
-                <div className="notebook-input-line"><input aria-label="Task title" value={taskTitle} placeholder="write a task here…" onChange={(event) => setTaskTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') addTask() }} /><button aria-label="Add task" onClick={addTask}><Plus className="size-4" /></button></div>
+                <div className="notebook-input-line"><input aria-label="Task title" value={taskTitle} placeholder="write a task here…" onChange={(event) => setTaskTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') addTask() }} /><button aria-label="Add task" onClick={addTask}><span className="notebook-add-label">add</span><Plus className="size-4" /></button></div>
+                {taskHint && <p className="mt-2 text-[11px] text-muted-ink" role="status">{taskHint}</p>}
                 <div className="notebook-form-options">
-                  <select aria-label="Task subject" value={taskSubject} onChange={(event) => setTaskSubject(event.target.value)}>{subjects.map((subject) => <option key={subject}>{subject}</option>)}</select>
-                  <input aria-label="Task deadline" type="date" value={taskDue} onChange={(event) => setTaskDue(event.target.value)} />
-                  <select aria-label="Task priority" value={taskPriority} onChange={(event) => setTaskPriority(Number(event.target.value) as TaskPriority)}><option value={1}>priority 1</option><option value={2}>priority 2</option><option value={3}>priority 3</option></select>
-                  <input aria-label="Estimated minutes" type="number" min="5" step="5" value={taskMinutes} onChange={(event) => setTaskMinutes(Math.max(5, Number(event.target.value)))} />
+                  <label className="notebook-form-field" htmlFor="task-subject"><span>subject</span><select id="task-subject" aria-label="Task subject" value={taskSubject} onChange={(event) => setTaskSubject(event.target.value)}>{subjects.map((subject) => <option key={subject}>{subject}</option>)}</select></label>
+                  <label className="notebook-form-field deadline-field" htmlFor="task-deadline"><span>deadline</span><input id="task-deadline" aria-label="Task deadline" type="date" value={taskDue} onChange={(event) => setTaskDue(event.target.value)} /></label>
+                  <label className="notebook-form-field" htmlFor="task-priority"><span>priority</span><select id="task-priority" aria-label="Task priority" value={taskPriority} onChange={(event) => setTaskPriority(Number(event.target.value) as TaskPriority)}><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option></select></label>
+                  <label className="notebook-form-field" htmlFor="task-estimate"><span>estimate</span><input id="task-estimate" aria-label="Estimated minutes" type="number" min="5" step="5" value={taskMinutes} onChange={(event) => setTaskMinutes(Math.max(5, Number(event.target.value)))} /></label>
                 </div>
-                <p className="notebook-form-hint">subject · deadline · priority · estimated minutes</p>
+                <p className="notebook-form-hint">Set the deadline first, then add any optional planning details.</p>
               </> : <>
                 <div className="notebook-input-line"><input aria-label="Event title" value={eventTitle} placeholder="competition, project, exam…" onChange={(event) => setEventTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') addEvent() }} /><button aria-label="Add important date" onClick={addEvent}><Plus className="size-4" /></button></div>
                 <div className="notebook-form-options event-options"><input aria-label="Event date" type="date" value={eventDate} onChange={(event) => setEventDate(event.target.value)} /><select aria-label="Event type" value={eventType} onChange={(event) => setEventType(event.target.value as PlannerEventType)}>{Object.entries(eventLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>
@@ -368,7 +365,7 @@ export function TaskNotebook({
                   <button aria-label={task.sourceWorkspaceId ? `${task.title} from ${task.sourceWorkspaceName ?? 'shared space'}` : `Mark ${task.title} complete`} title={task.sourceWorkspaceId ? 'Shared item — manage it in its workspace' : 'Mark complete'} className={`notebook-check ${task.sourceWorkspaceId ? 'shared-readonly-control' : ''}`} disabled={Boolean(task.sourceWorkspaceId)} onClick={() => toggleTask(task.id)}><Circle className="size-4" /></button>
                   <span className="lined-task-number">{String(index + 1).padStart(2, '0')}</span>
                   <div className="lined-task-copy"><strong>{task.title}</strong><span>{task.subject} · {task.estimatedMinutes}m · {task.dueDate ? formatDate(task.dueDate) : 'no deadline'}</span>{task.sourceWorkspaceName && <small className="workspace-item-source">from {task.sourceWorkspaceName}</small>}</div>
-                  {task.sourceWorkspaceName ? <span className="notebook-source-tag">shared</span> : <span className={`notebook-priority priority-${task.priority}`}>P{task.priority}</span>}
+                  {task.sourceWorkspaceName ? <span className="notebook-source-tag">shared</span> : <span className={`notebook-priority notebook-rhythm-tag ${rhythmRoleForSubject(task.subject, rhythmPlan)} priority-${task.priority}`}>{rhythmRoleForSubject(task.subject, rhythmPlan) === 'unassigned' ? `P${task.priority}` : rhythmRoleForSubject(task.subject, rhythmPlan)}</span>}
                   {!task.sourceWorkspaceId && <button aria-label={`Delete ${task.title}`} className="notebook-delete" onClick={() => deleteTask(task.id)}><Trash2 className="size-3.5" /></button>}
                 </div>) : <div className="notebook-empty"><ListChecks className="size-5" /><span>your page is clear — add the next small thing.</span></div>}
               </div>
@@ -378,9 +375,9 @@ export function TaskNotebook({
 
           <div className="notebook-side-column">
             <section className="notebook-paper priorities-paper" aria-labelledby="priorities-heading">
-              <div className="paper-heading"><h2 id="priorities-heading">priorities</h2><Heart className="size-5" /></div>
-              <div className="priority-list">{priorityTasks.length ? priorityTasks.map((task, index) => <div className="priority-line" key={task.id}><span className="priority-index">{index + 1}.</span><div><strong>{task.title}</strong><span>priority {task.priority} · {task.dueDate ? formatDate(task.dueDate) : 'no deadline'}</span>{task.sourceWorkspaceName && <small className="workspace-item-source">from {task.sourceWorkspaceName}</small>}</div></div>) : <p className="priority-empty">nothing queued yet — add the next small thing.</p>}</div>
-              <p className="side-note">the list follows deadline first, then priority when dates are close.</p>
+              <div className="paper-heading"><h2 id="priorities-heading">{rhythmPlan ? 'energy queue' : 'priorities'}</h2><Heart className="size-5" /></div>
+              <div className="priority-list">{priorityTasks.length ? priorityTasks.map((task, index) => { const role = rhythmRoleForSubject(task.subject, rhythmPlan); return <div className="priority-line" key={task.id}><span className="priority-index">{index + 1}.</span><div><strong>{task.title}</strong><span>{rhythmPlan && role !== 'unassigned' ? role : `priority ${task.priority}`} · {task.dueDate ? formatDate(task.dueDate) : 'no deadline'}</span>{task.sourceWorkspaceName && <small className="workspace-item-source">from {task.sourceWorkspaceName}</small>}</div></div> }) : <p className="priority-empty">nothing queued yet — add the next small thing.</p>}</div>
+              <p className="side-note">{rhythmPlan ? 'deadlines lead; your anchors guide close calls.' : 'the list follows deadline first, then priority when dates are close.'}</p>
             </section>
 
             <section className="notebook-paper remember-paper" aria-labelledby="remember-heading">
@@ -410,11 +407,10 @@ export function TaskNotebook({
 
         <div className="task-notebook-lower-grid">
           <section className="notebook-paper study-goals-paper" aria-labelledby="study-goals-heading">
-            <div className="paper-heading"><h2 id="study-goals-heading">study goals</h2><BookOpen className="size-5" /></div>
-            {isShared ? <p className="goal-paper-hint">shared spaces keep tasks + dates together. your life goals stay personal.</p> : <><div className="goal-lines">{goals.length ? goals.map((goal) => <div className="goal-line" key={goal.id}><span>•</span><div><strong>{goal.title}</strong><small>{goalProgress(goal, data.steps)}% complete</small></div></div>) : [1, 2, 3].map((item) => <div className="empty-goal-line" key={item}><span>•</span><i /></div>)}</div>
-            {!goals.length && <p className="goal-paper-hint">your big dreams can live here too.</p>}
-            {goals.length > 0 && <a className="notebook-text-link" href="/goals">open life goals →</a>}
-            </>}
+            <div className="paper-heading"><h2 id="study-goals-heading">koko rhythm</h2><Sparkles className="size-5" /></div>
+            <div className="notebook-rhythm-goal"><span>✦</span><div><strong>{rhythmPlan?.groups.find((group) => group.id === rhythmPlan.majorGroupId)?.name || 'choose your major'}</strong><small>major · {rhythmPlan?.groups.find((group) => group.id === rhythmPlan.minorGroupId)?.name || 'minor not set'}</small></div></div>
+            <p className="goal-paper-hint">Your two durable anchors keep the next task in context.</p>
+            <a className="notebook-text-link" href="/goals">open koko rhythm →</a>
           </section>
 
           <section className="notebook-paper notes-paper" aria-labelledby="notes-heading">

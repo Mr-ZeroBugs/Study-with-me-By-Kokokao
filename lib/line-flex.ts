@@ -142,10 +142,10 @@ const metricTile = (value: string, caption: string, color: string, backgroundCol
   layout: 'vertical',
   flex: 1,
   height: '84px',
-  backgroundColor: g.white,
+  backgroundColor,
   cornerRadius: '10px',
   borderWidth: '2px',
-  borderColor: g.ink,
+  borderColor,
   paddingTop: 'md',
   paddingBottom: 'md',
   paddingStart: 'sm',
@@ -172,10 +172,10 @@ const metricStrip = (tiles: Fc[]): Fc => ({
 const panel = (contents: Fc[], backgroundColor: string, borderColor: string): Fc => ({
   type: 'box',
   layout: 'vertical',
-  backgroundColor: g.white,
+  backgroundColor,
   cornerRadius: '14px',
   borderWidth: '2px',
-  borderColor: g.ink,
+  borderColor,
   paddingAll: 'lg',
   contents,
 })
@@ -451,6 +451,55 @@ function extraRow(count: number, color: string): Fc {
   }
 }
 
+export type BatchCaptureSummaryItem = {
+  kind: 'task' | 'event'
+  title: string
+  date: string
+  subject?: string
+  status: 'created' | 'duplicate' | 'failed'
+}
+
+/** One compact receipt for a natural-language message containing many items. */
+export function createBatchCaptureFlex(items: BatchCaptureSummaryItem[]): LineFlexMessage {
+  const created = items.filter((item) => item.status === 'created')
+  const duplicateCount = items.filter((item) => item.status === 'duplicate').length
+  const failedCount = items.filter((item) => item.status === 'failed').length
+  const taskCount = created.filter((item) => item.kind === 'task').length
+  const eventCount = created.filter((item) => item.kind === 'event').length
+  const visible = items.slice(0, 8)
+  const rows: Fc[] = visible.map((item, index) => {
+    const event = item.kind === 'event'
+    const statusColor = item.status === 'created' ? (event ? g.iris : g.sage) : item.status === 'duplicate' ? g.amber : g.rose
+    const statusLabel = item.status === 'created' ? (event ? 'DATE' : 'TASK') : item.status === 'duplicate' ? 'EXISTS' : 'FAILED'
+    return {
+      type: 'box', layout: 'horizontal', alignItems: 'center', spacing: 'sm', paddingTop: index ? 'md' : 'none',
+      contents: [
+        iconCell(event ? '◆' : '✓', '30px', statusColor, event ? g.irisFrost : g.sageFrost, event ? g.irisBorder : g.sageBorder),
+        { type: 'box', layout: 'vertical', flex: 1, contents: [
+          t(compact(item.title, 'รายการใหม่'), { size: 'sm', weight: 'bold', color: g.ink, wrap: true, maxLines: 2 }),
+          t([item.subject, item.date].filter(Boolean).join(' · '), { size: 'xxs', color: g.ghost, margin: 'xs', wrap: true, maxLines: 1, adjustMode: 'shrink-to-fit' }),
+        ] },
+        chip(statusLabel, statusColor, item.status === 'failed' ? g.roseFrost : item.status === 'duplicate' ? g.amberFrost : event ? g.irisFrost : g.sageFrost, item.status === 'failed' ? g.roseBorder : item.status === 'duplicate' ? g.amberBorder : event ? g.irisBorder : g.sageBorder),
+      ],
+    }
+  })
+
+  return {
+    type: 'flex',
+    altText: `Koko แยกและบันทึก ${created.length} รายการแล้ว`,
+    contents: shell([
+      brandHero(g.skyBright, g.ink, 'study', 'Koko Batch', 'แยกให้แล้ว ' + items.length + ' รายการ', 'แต่ละวิชาและแต่ละวันไม่ถูกรวมกันแล้ว'),
+      metricStrip([
+        metricTile(String(taskCount), 'งานที่เพิ่ม', g.sageDeep, g.mint, g.ink),
+        metricTile(String(eventCount), 'วันสำคัญ', g.irisDeep, g.violetBright, g.ink),
+        metricTile(String(duplicateCount + failedCount), duplicateCount ? 'มีอยู่แล้ว / ข้าม' : 'เพิ่มไม่สำเร็จ', g.amberDeep, g.sun, g.ink),
+      ]),
+      { type: 'box', layout: 'vertical', paddingStart: 'xl', paddingEnd: 'xl', paddingBottom: 'lg', contents: [label('ตรวจรายการที่ Koko เข้าใจ', g.sub), { type: 'box', layout: 'vertical', margin: 'md', contents: rows }] },
+      ticker('ถ้ามีรายการไหนผิด เปิด Planner เพื่อแก้เฉพาะรายการนั้นได้เลย', g.skyFrost, g.sky),
+    ], footerBar(messageButton('ดูงาน', '/list', g.sage), messageButton('ดูวันสำคัญ', '/events', g.iris, 'secondary'))),
+  }
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // STATUS
 // ═════════════════════════════════════════════════════════════════════════════
@@ -545,37 +594,76 @@ export function createTaskDoneFlex(title: string): LineFlexMessage {
 // ═════════════════════════════════════════════════════════════════════════════
 // MORNING REMINDER
 // ═════════════════════════════════════════════════════════════════════════════
-export function createMorningReminderFlex(tasks: Array<Record<string, unknown>>, date: string): LineFlexMessage {
-  const visible = tasks.slice(0, 5)
-  const urgentCount = tasks.filter((task) => Number(task.priority) === 3).length
-  const estimatedMinutes = tasks.reduce((total, task) => total + Math.max(0, Number(task.estimated_minutes) || 0), 0)
-  const rows = visible.map((task, index) => taskRow(task, index))
+export function createMorningReminderFlex(
+  tasks: Array<Record<string, unknown>>,
+  date: string,
+  options?: { ticker?: string; events?: Array<Record<string, unknown>>; briefing?: { title: string; detail: string } },
+): LineFlexMessage {
+  const overdueTasks = tasks.filter((task) => compact(task.due_date) < date).slice(0, 5)
+  const todayTasks = tasks.filter((task) => compact(task.due_date) === date).slice(0, Math.max(0, 5 - overdueTasks.length))
+  const events = (options?.events ?? []).slice(0, 3)
+  const visibleTaskCount = overdueTasks.length + todayTasks.length
   const body: Fc[] = [
-    brandHero(g.sun, g.ink, 'study', 'Good Morning', 'แผนวันนี้', date + ' · ' + tasks.length + ' งานรออยู่'),
+    brandHero(g.sun, g.ink, overdueTasks.length ? 'alert' : 'study', 'Good Morning', 'เช้านี้มีอะไรบ้าง', date + ' · สรุปงานและวันสำคัญของคุณ'),
     metricStrip([
-      metricTile(String(tasks.length), 'งานวันนี้', g.amberDeep, g.sun, g.ink),
-      metricTile(String(urgentCount), 'งานด่วน', g.roseDeep, g.coral, g.ink),
-      metricTile(compactMinutes(estimatedMinutes), 'เวลาที่ตั้งไว้รวม', g.skyDeep, g.skyBright, g.ink),
+      metricTile(String(todayTasks.length), 'งานวันนี้', g.amberDeep, g.sun, g.ink),
+      metricTile(String(overdueTasks.length), 'งานค้าง', g.roseDeep, g.coral, g.ink),
+      metricTile(String(events.length), 'วันสำคัญ', g.irisDeep, g.violetBright, g.ink),
     ]),
-    {
+  ]
+
+  if (options?.briefing) body.push({
+    type: 'box', layout: 'vertical', paddingStart: 'xl', paddingEnd: 'xl', paddingBottom: 'md',
+    contents: [panel([
+      label('koko\'s first move', g.sage),
+      t(options.briefing.title, { size: 'md', weight: 'bold', color: g.sageDeep, wrap: true, margin: 'sm', maxLines: 2 }),
+      t(options.briefing.detail, { size: 'xs', color: g.inkMid, wrap: true, margin: 'sm', maxLines: 3 }),
+    ], g.sageFrost, g.sageBorder)],
+  })
+
+  if (overdueTasks.length) body.push({
+    type: 'box',
+    layout: 'vertical',
+    paddingStart: 'xl',
+    paddingEnd: 'xl',
+    paddingBottom: 'md',
+    contents: [
+      label('งานที่เลยกำหนดแล้ว', g.rose),
+      { type: 'box', layout: 'vertical', spacing: 'xs', margin: 'md', contents: overdueTasks.map(taskRow) },
+    ],
+  })
+
+  if (todayTasks.length) body.push({
       type: 'box',
       layout: 'vertical',
       paddingStart: 'xl',
       paddingEnd: 'xl',
+      paddingBottom: 'md',
       contents: [
         label('งานของวันนี้', g.sub),
-        { type: 'box', layout: 'vertical', spacing: 'xs', margin: 'md', contents: rows },
+        { type: 'box', layout: 'vertical', spacing: 'xs', margin: 'md', contents: todayTasks.map(taskRow) },
       ],
-    },
-  ]
+  })
 
-  if (tasks.length > visible.length) body.push(extraRow(tasks.length - visible.length, g.amber))
+  if (events.length) body.push({
+    type: 'box',
+    layout: 'vertical',
+    paddingStart: 'xl',
+    paddingEnd: 'xl',
+    paddingBottom: 'md',
+    contents: [
+      label('วันสำคัญใน 7 วันข้างหน้า', g.iris),
+      { type: 'box', layout: 'vertical', spacing: 'xs', margin: 'md', contents: events.map(eventRow) },
+    ],
+  })
+
+  if (tasks.length > visibleTaskCount) body.push(extraRow(tasks.length - visibleTaskCount, g.amber))
   body.push(hr())
-  body.push(ticker('เริ่มจากงานเล็กที่สุดก่อนก็ได้', g.sun, g.ink))
+  body.push(ticker(options?.ticker || 'เริ่มจากงานเล็กที่สุดก่อนก็ได้', g.sun, g.ink))
 
   return {
     type: 'flex',
-    altText: 'Good Morning · วันนี้มีงาน ' + tasks.length + ' รายการ',
+    altText: 'Good Morning · งานวันนี้ ' + todayTasks.length + ' · งานค้าง ' + overdueTasks.length + ' · วันสำคัญ ' + events.length,
     contents: shell(
       body,
       footerBar(

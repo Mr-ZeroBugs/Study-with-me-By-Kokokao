@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server'
-import { verifyLineSignature, sendLineReply, parseTaskInput, parseEventInput } from '@/lib/line'
-import { createEventsFlex, createStatusFlex, createTaskDoneFlex, createTasksFlex } from '@/lib/line-flex'
+import { verifyLineSignature, sendLineReply, parseTaskInput } from '@/lib/line'
+import { createBatchCaptureFlex, createEventsFlex, createStatusFlex, createTaskDoneFlex, createTasksFlex, type BatchCaptureSummaryItem } from '@/lib/line-flex'
 import { analyzeUserMessageWithGemini } from '@/lib/gemini'
 import { getSupabaseAdmin } from '@/lib/supabase-admin'
+import { loadApprovedPersonalMemory, stagePersonalMemoryProposal } from '@/lib/personal-memory-server'
+import { findExactOpenDuplicate, prepareTaskInput } from '@/lib/task-intelligence'
 import { decorateLineWorkspaceRow, loadLineWorkspaceContext } from '@/lib/line-workspaces'
 import type { LineWorkspaceContext } from '@/lib/line-workspaces'
+import { loadLineAiContext, resolveLineSubjectName, type LineAiContext } from '@/lib/line-ai-context'
 import crypto from 'crypto'
 
 type NaturalTeamTaskRequest = {
@@ -14,6 +17,85 @@ type NaturalTeamTaskRequest = {
 
 const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://koko-study.vercel.app'
 const appUrl = /^https?:\/\//i.test(configuredAppUrl) ? configuredAppUrl.replace(/\/$/, '') : 'https://koko-study.vercel.app'
+
+function bangkokDateKey(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date)
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return `${value.year}-${value.month}-${value.day}`
+}
+
+// The AI may interpret language, but it may never create a new subject from
+// that interpretation. The per-user ontology snapshot is the authority.
+function resolveLineSubject(context: LineAiContext, rawName: string) {
+  const name = resolveLineSubjectName(rawName, context)
+  return { name, id: context.subjectIds[name] ?? null }
+}
+
+async function insertLineTask(admin: ReturnType<typeof getSupabaseAdmin>, task: Record<string, unknown>) {
+  const intelligence = prepareTaskInput({
+    title: typeof task.title === 'string' ? task.title : '',
+    subject: typeof task.subject === 'string' ? task.subject : 'General',
+    dueDate: typeof task.due_date === 'string' ? task.due_date : '',
+    deadlineConfidence: task.deadline_confidence === 'explicit' || task.deadline_confidence === 'inferred' || task.deadline_confidence === 'none' ? task.deadline_confidence : undefined,
+  })
+  const normalizedTask: Record<string, unknown> = {
+    ...task,
+    title: intelligence.title,
+    subject: intelligence.subject,
+    normalized_title: intelligence.normalizedTitle,
+    subject_key: intelligence.subjectKey,
+    deadline_confidence: intelligence.deadlineConfidence,
+  }
+  const workspaceId = typeof normalizedTask.workspace_id === 'string' ? normalizedTask.workspace_id : null
+  let duplicateQuery = admin
+    .from('planner_tasks')
+    .select('id, title, subject, due_date, completed')
+    .eq('completed', false)
+    .order('created_at', { ascending: false })
+    .limit(100)
+  duplicateQuery = workspaceId
+    ? duplicateQuery.eq('workspace_id', workspaceId)
+    : duplicateQuery.eq('user_id', String(normalizedTask.user_id)).is('workspace_id', null)
+  const { data: existingTasks } = await duplicateQuery
+  const duplicate = findExactOpenDuplicate(
+    (existingTasks ?? []).map((item) => ({ ...item, dueDate: item.due_date ?? '' })),
+    { title: intelligence.title, subject: intelligence.subject, dueDate: typeof normalizedTask.due_date === 'string' ? normalizedTask.due_date : '' },
+  )
+  if (duplicate) return { error: null, duplicate }
+
+  const { subject_id: _subjectId, normalized_title: _normalizedTitle, subject_key: _subjectKey, deadline_confidence: _deadlineConfidence, ...legacyTask } = normalizedTask as Record<string, unknown>
+  const result = await admin.from('planner_tasks').insert(normalizedTask)
+  // V1 is additive and may not have been run on every environment yet. Do not
+  // turn a harmless missing column into a lost LINE task during rollout.
+  if (result.error && /subject_id|normalized_title|subject_key|deadline_confidence|schema cache|column/i.test(result.error.message)) {
+    const fallback = await admin.from('planner_tasks').insert(legacyTask)
+    return { ...fallback, duplicate: null }
+  }
+  return { ...result, duplicate: null }
+}
+
+async function insertLineEvent(admin: ReturnType<typeof getSupabaseAdmin>, event: Record<string, unknown>) {
+  const userId = String(event.user_id ?? '')
+  const title = typeof event.title === 'string' ? event.title.replace(/\s+/g, ' ').trim().slice(0, 160) : ''
+  const eventDate = typeof event.event_date === 'string' ? event.event_date : ''
+  if (!userId || !title || !/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) return { error: new Error('Invalid event'), duplicate: null }
+
+  const { data: duplicate } = await admin
+    .from('planner_events')
+    .select('id, title, event_date')
+    .eq('user_id', userId)
+    .is('workspace_id', null)
+    .eq('event_date', eventDate)
+    .ilike('title', title)
+    .limit(1)
+    .maybeSingle()
+  if (duplicate) return { error: null, duplicate }
+
+  const result = await admin.from('planner_events').insert({ ...event, title })
+  return { ...result, duplicate: null }
+}
 
 function isWebsiteLinkRequest(text: string) {
   return /^\/(?:web|website|site|link)$/i.test(text)
@@ -102,7 +184,7 @@ export async function POST(request: Request) {
 
           const { data: taskToComplete } = await admin
             .from('planner_tasks')
-            .select('title, workspace_id')
+            .select('title, subject, workspace_id')
             .eq('id', taskId)
             .eq('user_id', userConn.user_id)
             .maybeSingle()
@@ -122,6 +204,12 @@ export async function POST(request: Request) {
             .maybeSingle()
 
           if (completedTask && !completeError) {
+            await admin.from('user_planner_behavior_events').insert({
+              user_id: userConn.user_id,
+              event_type: 'task_completed',
+              subject: taskToComplete?.subject || 'General',
+              task_id: taskId,
+            })
             await sendLineReply(replyToken, [createTaskDoneFlex(completedTask.title)])
           } else {
             await sendLineReply(replyToken, [{ type: 'text', text: 'งานนี้อาจถูกทำเสร็จไปแล้ว หรือหาไม่พบครับ ลองกด /list เพื่อรีเฟรชรายการนะ' }])
@@ -133,7 +221,7 @@ export async function POST(request: Request) {
       // Handle Text Messages
       if (event.type === 'message' && event.message?.type === 'text') {
         const text = (event.message.text || '').trim()
-        const today = new Date().toISOString().split('T')[0]
+        const today = bangkokDateKey()
 
         // 1. New codes use ten digits. Keep accepting an old four-digit code
         // until it expires so users already mid-link are not interrupted.
@@ -227,6 +315,11 @@ export async function POST(request: Request) {
 
         const userId = userConn.user_id
         const workspaceContext = await loadLineWorkspaceContext(admin, userId)
+        let ontologyContextPromise: Promise<LineAiContext> | null = null
+        const getOntologyContext = () => {
+          ontologyContextPromise ??= loadLineAiContext(admin, userId, workspaceContext)
+          return ontologyContextPromise
+        }
 
         // 3. Fast Command: /help
         if (text === '/help' || text === 'เมนู' || text === 'ช่วยเหลือ' || text === '/menu') {
@@ -237,6 +330,7 @@ export async function POST(request: Request) {
                 `✨ พิมพ์คุยภาษาพูดได้เลย เช่น:\n` +
                 `• "พรุ่งนี้มีสอบฟิสิกส์ตอนบ่าย"\n` +
                 `• "ช่วยเตือนทำการบ้านเลขหน่อย ด่วนมาก"\n` +
+                `• "เลขส่งศุกร์ อังกฤษท่องศัพท์พรุ่งนี้ แล้ววันจันทร์สอบชีวะ"\n` +
                 `• "อ่านชีวะเสร็จแล้วจ้า"\n` +
                 `• "มีงานอะไรต้องทำบ้าง"\n\n` +
                 `📌 หรือใช้คำสั่งลัด:\n` +
@@ -309,23 +403,31 @@ export async function POST(request: Request) {
             continue
           }
 
+          const ontologyContext = await getOntologyContext()
           const parsed = parseTaskInput(taskInput)
+          const resolvedSubject = resolveLineSubject(ontologyContext, parsed.subject)
           const teamTaskId = crypto.randomUUID()
           const targetWorkspaceId = workspaceContext.ids[targetIndex]
           const targetWorkspaceName = workspaceContext.names[targetWorkspaceId] || 'Team Space'
-          const { error: teamInsertError } = await admin.from('planner_tasks').insert({
+          const { error: teamInsertError, duplicate: teamDuplicate } = await insertLineTask(admin, {
             id: teamTaskId,
             user_id: userId,
             workspace_id: targetWorkspaceId,
             title: parsed.title,
-            subject: parsed.subject,
+            subject: resolvedSubject.name,
+            subject_id: resolvedSubject.id,
             due_date: parsed.dueDate || null,
+            deadline_confidence: parsed.deadlineConfidence,
             estimated_minutes: parsed.estimatedMinutes,
             priority: parsed.priority,
             completed: false,
             created_at: new Date().toISOString(),
           })
 
+          if (teamDuplicate) {
+            await sendLineReply(replyToken, [{ type: 'text', text: `งาน "${teamDuplicate.title}" มีอยู่ใน Team Space นี้แล้ว จึงเก็บไว้แค่รายการเดียวครับ` }])
+            continue
+          }
           if (teamInsertError) {
             console.error('Failed to create LINE team task:', teamInsertError)
             await sendLineReply(replyToken, [{ type: 'text', text: 'เพิ่มงานเข้า Team Space ไม่สำเร็จครับ ลองใหม่อีกครั้งนะ' }])
@@ -334,7 +436,7 @@ export async function POST(request: Request) {
 
           await sendLineReply(replyToken, [{
             type: 'text',
-            text: `✅ เพิ่มงานเข้า Team Space แล้ว\n\n🏠 ${targetWorkspaceName}\n📌 งาน: ${parsed.title}\n📅 กำหนด: ${parsed.dueDate || 'ไม่ระบุ'}\n⚡ Priority: ${parsed.priority}`,
+            text: `✅ เพิ่มงานเข้า Team Space แล้ว\n\n🏠 ${targetWorkspaceName}\n📌 งาน: ${parsed.title}\n📚 วิชา: ${resolvedSubject.name}\n📅 กำหนด: ${parsed.dueDate || 'ไม่ระบุ'}\n⚡ Priority: ${parsed.priority}`,
             quickReply: {
               items: [
                 { type: 'action', action: { type: 'message', label: '📋 ดูงานทีม', text: '/list' } },
@@ -366,7 +468,7 @@ export async function POST(request: Request) {
           const taskQuery = doneCommand[1].trim()
           let doneQuery = admin
             .from('planner_tasks')
-            .select('id, title, workspace_id')
+            .select('id, title, subject, workspace_id')
             .eq('completed', false)
             .ilike('title', '%' + taskQuery + '%')
           doneQuery = workspaceContext.ids.length
@@ -385,6 +487,7 @@ export async function POST(request: Request) {
               .update({ completed: true })
               .eq('id', matchedTask.id)
               .eq('user_id', userId)
+            await admin.from('user_planner_behavior_events').insert({ user_id: userId, event_type: 'task_completed', subject: matchedTask.subject || 'General', task_id: matchedTask.id })
             await sendLineReply(replyToken, [createTaskDoneFlex(matchedTask.title)])
           } else {
             await sendLineReply(replyToken, [{ type: 'text', text: 'ยังหา task ที่ชื่อใกล้กับ "' + taskQuery + '" ไม่เจอครับ ลองกด /list เพื่อดูรายการอีกครั้งนะ' }])
@@ -393,30 +496,74 @@ export async function POST(request: Request) {
         }
 
         // 5. Try Gemini AI Understanding First!
-        const aiResult = await analyzeUserMessageWithGemini(text, today)
+        const personalMemory = await loadApprovedPersonalMemory(admin, userId)
+        const ontologyContext = await getOntologyContext()
+        const aiResult = await analyzeUserMessageWithGemini(text, today, personalMemory, ontologyContext.prompt)
 
         if (aiResult) {
+          // Only conversational input may create an optional personal-memory
+          // proposal. Commands, tasks, dates, and Team Space data never do.
+          if (aiResult.action === 'CHAT' && !/(?:team\s*space|workspace|งานทีม|ทีม)/i.test(text)) {
+            await stagePersonalMemoryProposal(admin, userId, aiResult.memoryProposal)
+          }
+
+          // --- AI ACTION: ADD_BATCH ---
+          // A single school message often contains several unrelated subjects
+          // and deadlines. Persist each item independently, then return one
+          // receipt so the learner can verify the interpretation at a glance.
+          if (aiResult.action === 'ADD_BATCH') {
+            const summary: BatchCaptureSummaryItem[] = []
+            for (const item of aiResult.items.slice(0, 8)) {
+              if (item.kind === 'task') {
+                const resolvedSubject = resolveLineSubject(ontologyContext, item.subject)
+                const { error, duplicate } = await insertLineTask(admin, {
+                  id: crypto.randomUUID(), user_id: userId, title: item.title, subject: resolvedSubject.name,
+                  subject_id: resolvedSubject.id, due_date: item.dueDate, deadline_confidence: 'inferred',
+                  estimated_minutes: item.estimatedMinutes, priority: item.priority, completed: false,
+                  created_at: new Date().toISOString(),
+                })
+                summary.push({ kind: 'task', title: item.title, subject: resolvedSubject.name, date: item.dueDate, status: duplicate ? 'duplicate' : error ? 'failed' : 'created' })
+                continue
+              }
+
+              const { error, duplicate } = await insertLineEvent(admin, {
+                id: crypto.randomUUID(), user_id: userId, title: item.title, event_date: item.eventDate,
+                type: item.type, notes: item.notes, created_at: new Date().toISOString(),
+              })
+              summary.push({ kind: 'event', title: item.title, date: item.eventDate, status: duplicate ? 'duplicate' : error ? 'failed' : 'created' })
+            }
+            await sendLineReply(replyToken, [createBatchCaptureFlex(summary)])
+            continue
+          }
+
           // --- AI ACTION: ADD_TODO ---
           if (aiResult.action === 'ADD_TODO') {
             const taskId = crypto.randomUUID()
-            const { error: insertError } = await admin.from('planner_tasks').insert({
+            const resolvedSubject = resolveLineSubject(ontologyContext, aiResult.subject || 'General')
+            const { error: insertError, duplicate } = await insertLineTask(admin, {
               id: taskId,
               user_id: userId,
               title: aiResult.title,
-              subject: aiResult.subject || 'General',
+              subject: resolvedSubject.name,
+              subject_id: resolvedSubject.id,
               due_date: aiResult.dueDate || today,
+              deadline_confidence: 'inferred',
               estimated_minutes: aiResult.estimatedMinutes || 25,
               priority: aiResult.priority || 2,
               completed: false,
               created_at: new Date().toISOString(),
             })
 
+            if (duplicate) {
+              await sendLineReply(replyToken, [{ type: 'text', text: `งาน "${duplicate.title}" มีอยู่ในรายการแล้ว จึงเก็บไว้แค่รายการเดียวครับ` }])
+              continue
+            }
             if (!insertError) {
               const priorityLabel = aiResult.priority === 3 ? '🔴 สูงมาก (ด่วน)' : aiResult.priority === 2 ? '🟡 ปานกลาง' : '🟢 ทั่วไป'
               let replyMessage =
                 `✨ บันทึก To-Do สำเร็จแล้ว! 🤖\n\n` +
                 `📌 งาน: ${aiResult.title}\n` +
-                `📚 วิชา: ${aiResult.subject || 'General'}\n` +
+                `📚 วิชา: ${resolvedSubject.name}\n` +
                 `📅 กำหนด: ${aiResult.dueDate || today}\n` +
                 `⚡ ความสำคัญ: ${priorityLabel}`
 
@@ -523,6 +670,8 @@ export async function POST(request: Request) {
                 .update({ completed: true })
                 .eq('id', taskToComplete.id)
 
+              await admin.from('user_planner_behavior_events').insert({ user_id: userId, event_type: 'task_completed', subject: taskToComplete.subject || 'General', task_id: taskToComplete.id })
+
               await sendLineReply(replyToken, [
                 {
                   type: 'text',
@@ -612,24 +761,37 @@ export async function POST(request: Request) {
         // 8. Final Fallback: Direct regex parser
         const parsed = parseTaskInput(text)
         const taskId = crypto.randomUUID()
+        const fallbackOntologyContext = await getOntologyContext()
+        const resolvedSubject = resolveLineSubject(fallbackOntologyContext, parsed.subject)
 
-        await admin.from('planner_tasks').insert({
+        const { error: fallbackInsertError, duplicate: fallbackDuplicate } = await insertLineTask(admin, {
           id: taskId,
           user_id: userId,
           title: parsed.title,
-          subject: parsed.subject,
+          subject: resolvedSubject.name,
+          subject_id: resolvedSubject.id,
           due_date: parsed.dueDate || null,
+          deadline_confidence: parsed.deadlineConfidence,
           estimated_minutes: parsed.estimatedMinutes,
           priority: parsed.priority,
           completed: false,
           created_at: new Date().toISOString(),
         })
 
+        if (fallbackDuplicate) {
+          await sendLineReply(replyToken, [{ type: 'text', text: `งาน "${fallbackDuplicate.title}" มีอยู่ในรายการแล้ว จึงเก็บไว้แค่รายการเดียวครับ` }])
+          continue
+        }
+        if (fallbackInsertError) {
+          await sendLineReply(replyToken, [{ type: 'text', text: 'เพิ่มงานไม่สำเร็จครับ ลองใหม่อีกครั้งนะ' }])
+          continue
+        }
+
         const priorityLabel = parsed.priority === 3 ? '🔴 สูงมาก (ด่วน)' : parsed.priority === 2 ? '🟡 ปานกลาง' : '🟢 ทั่วไป'
         await sendLineReply(replyToken, [
           {
             type: 'text',
-            text: `✨ บันทึก To-Do สำเร็จแล้ว!\n\n📌 งาน: ${parsed.title}\n📚 วิชา: ${parsed.subject}\n📅 กำหนด: ${parsed.dueDate || 'ไม่ระบุ'}\n⚡ ความสำคัญ: ${priorityLabel}`,
+            text: `✨ บันทึก To-Do สำเร็จแล้ว!\n\n📌 งาน: ${parsed.title}\n📚 วิชา: ${resolvedSubject.name}\n📅 กำหนด: ${parsed.dueDate || 'ไม่ระบุ'}\n⚡ ความสำคัญ: ${priorityLabel}`,
             quickReply: {
               items: [
                 {

@@ -45,3 +45,4 @@ export function decorateLineWorkspaceRow<T extends Record<string, unknown>>(row:
   const workspaceName = workspaceId ? context.names[workspaceId] : undefined
   return workspaceName ? { ...row, workspace_name: workspaceName } : row
 }
+import 'server-only'

@@ -5,11 +5,12 @@ import { Settings } from 'lucide-react'
 import { SettingsModal } from './settings-modal'
 import { AuthModal } from './auth-modal'
 import { supabase } from '@/lib/supabase'
+import type { User } from '@supabase/supabase-js'
 
 export function SettingsFloatingButton() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isAuthOpen, setIsAuthOpen] = useState(false)
-  const [user, setUser] = useState<any>(null)
+  const [user, setUser] = useState<User | null>(null)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {

@@ -1,3 +1,4 @@
+import 'server-only'
 import crypto from 'crypto'
 
 export interface LineTextMessage {
@@ -118,6 +119,7 @@ export function parseTaskInput(input: string): {
   title: string
   subject: string
   dueDate: string
+  deadlineConfidence: 'explicit' | 'inferred'
   priority: 1 | 2 | 3
   estimatedMinutes: number
 } {
@@ -127,8 +129,9 @@ export function parseTaskInput(input: string): {
 
   let subject = 'General'
   let priority: 1 | 2 | 3 = 2
-  let estimatedMinutes = 25
+  const estimatedMinutes = 25
   let dueDate = ''
+  let deadlineConfidence: 'explicit' | 'inferred' = 'inferred'
 
   // 1. Check for [Subject] tag e.g. [Math] or [ฟิสิกส์]
   const subjectMatch = cleaned.match(/\[(.*?)\]/)
@@ -157,22 +160,26 @@ export function parseTaskInput(input: string): {
 
   if (cleaned.includes('วันนี้') || cleaned.toLowerCase().includes('today')) {
     dueDate = formatDate(today)
+    deadlineConfidence = 'explicit'
     cleaned = cleaned.replace(/วันนี้|today/gi, '').trim()
   } else if (cleaned.includes('พรุ่งนี้') || cleaned.toLowerCase().includes('tomorrow')) {
     const tomorrow = new Date(today)
     tomorrow.setDate(tomorrow.getDate() + 1)
     dueDate = formatDate(tomorrow)
+    deadlineConfidence = 'explicit'
     cleaned = cleaned.replace(/พรุ่งนี้|tomorrow/gi, '').trim()
   } else if (cleaned.includes('มะรืน')) {
     const dayAfter = new Date(today)
     dayAfter.setDate(dayAfter.getDate() + 2)
     dueDate = formatDate(dayAfter)
+    deadlineConfidence = 'explicit'
     cleaned = cleaned.replace(/มะรืน/gi, '').trim()
   } else {
     // Check for explicit YYYY-MM-DD or DD/MM
     const dateMatch = cleaned.match(/\b(\d{4}-\d{2}-\d{2})\b/)
     if (dateMatch) {
       dueDate = dateMatch[1]
+      deadlineConfidence = 'explicit'
       cleaned = cleaned.replace(dateMatch[0], '').trim()
     } else {
       // Default to today if not specified
@@ -187,97 +194,8 @@ export function parseTaskInput(input: string): {
     title,
     subject,
     dueDate,
+    deadlineConfidence,
     priority,
     estimatedMinutes,
-  }
-}
-
-export type PlannerEventType = 'competition' | 'project' | 'exam' | 'important'
-
-/**
- * Parse natural language / command for Important Dates / Events
- * Examples:
- * - "/event สอบกลางภาคฟิสิกส์ [exam] 2026-09-15"
- * - "/date แข่งขัน Hackathon [competition] พรุ่งนี้"
- * - "/event ส่งโปรเจกต์เว็บ [project] มะรืน"
- */
-export function parseEventInput(input: string): {
-  title: string
-  eventDate: string
-  type: PlannerEventType
-  notes: string
-} {
-  let cleaned = input
-    .replace(/^(\/event|\/date|จดวันสำคัญ|วันสำคัญ|เพิ่มวันสำคัญ|เพิ่มนัดหมาย)\s*/i, '')
-    .trim()
-
-  let type: PlannerEventType = 'important'
-  let eventDate = ''
-  let notes = ''
-
-  // 1. Detect type in tag [exam], [project], [competition], [important]
-  const typeMatch = cleaned.match(/\[(.*?)\]/)
-  if (typeMatch) {
-    const rawType = typeMatch[1].toLowerCase().trim()
-    if (rawType.includes('exam') || rawType.includes('สอบ')) {
-      type = 'exam'
-    } else if (rawType.includes('comp') || rawType.includes('แข่ง')) {
-      type = 'competition'
-    } else if (rawType.includes('proj') || rawType.includes('โปรเจกต์') || rawType.includes('งาน')) {
-      type = 'project'
-    } else {
-      type = 'important'
-    }
-    cleaned = cleaned.replace(typeMatch[0], '').trim()
-  } else {
-    // Detect keywords in text
-    if (cleaned.includes('สอบ') || cleaned.toLowerCase().includes('exam')) {
-      type = 'exam'
-    } else if (cleaned.includes('แข่ง') || cleaned.toLowerCase().includes('competition')) {
-      type = 'competition'
-    } else if (cleaned.includes('โปรเจกต์') || cleaned.includes('project') || cleaned.includes('ส่งงาน')) {
-      type = 'project'
-    }
-  }
-
-  // 2. Date detection
-  const today = new Date()
-  const formatDate = (d: Date) => {
-    const y = d.getFullYear()
-    const m = String(d.getMonth() + 1).padStart(2, '0')
-    const day = String(d.getDate()).padStart(2, '0')
-    return `${y}-${m}-${day}`
-  }
-
-  if (cleaned.includes('วันนี้') || cleaned.toLowerCase().includes('today')) {
-    eventDate = formatDate(today)
-    cleaned = cleaned.replace(/วันนี้|today/gi, '').trim()
-  } else if (cleaned.includes('พรุ่งนี้') || cleaned.toLowerCase().includes('tomorrow')) {
-    const tomorrow = new Date(today)
-    tomorrow.setDate(tomorrow.getDate() + 1)
-    eventDate = formatDate(tomorrow)
-    cleaned = cleaned.replace(/พรุ่งนี้|tomorrow/gi, '').trim()
-  } else if (cleaned.includes('มะรืน')) {
-    const dayAfter = new Date(today)
-    dayAfter.setDate(dayAfter.getDate() + 2)
-    eventDate = formatDate(dayAfter)
-    cleaned = cleaned.replace(/มะรืน/gi, '').trim()
-  } else {
-    const dateMatch = cleaned.match(/\b(\d{4}-\d{2}-\d{2})\b/)
-    if (dateMatch) {
-      eventDate = dateMatch[1]
-      cleaned = cleaned.replace(dateMatch[0], '').trim()
-    } else {
-      eventDate = formatDate(today)
-    }
-  }
-
-  const title = cleaned.replace(/\s+/g, ' ').trim() || 'วันสำคัญ'
-
-  return {
-    title,
-    eventDate,
-    type,
-    notes,
   }
 }
