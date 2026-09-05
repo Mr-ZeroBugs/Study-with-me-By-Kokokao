@@ -124,6 +124,15 @@ export async function POST(request: Request) {
   const input = body.input ?? {}
   const { client, userId } = context
 
+  if (action === 'sync_rhythm_plan') {
+    const plan = input.plan
+    if (!plan || typeof plan !== 'object' || Array.isArray(plan)) return responseError('A valid Rhythm plan is required.')
+    const { data, error } = await client.rpc('sync_ontology_rhythm_plan', { next_plan: plan })
+    if (error || !data) return responseError(error?.message || 'Could not save your Rhythm plan.')
+    await writeActionLog(client, requestId, action, 'ontology_rhythm_plan', userId, null, data)
+    return NextResponse.json({ data })
+  }
+
   if (action === 'create_subject') {
     const name = text(input.name)
     if (!name) return responseError('A subject name is required.')

@@ -81,6 +81,7 @@ export type KokoActionName =
   | 'set_rhythm_goal_role'
   | 'set_maintenance_practice'
   | 'deactivate_maintenance_practice'
+  | 'sync_rhythm_plan'
   | 'create_task'
   | 'complete_task'
 

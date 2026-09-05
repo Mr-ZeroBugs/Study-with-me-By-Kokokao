@@ -1,6 +1,6 @@
 import type { User } from '@supabase/supabase-js'
 import { loadOntologySnapshot, runOntologyAction } from './ontology-client'
-import type { KokoRhythmPlan, RhythmSubject } from './rhythm-storage'
+import { rhythmIdentity, type KokoRhythmPlan, type RhythmSubject } from './rhythm-storage'
 
 type Row = Record<string, unknown>
 const string = (value: unknown) => typeof value === 'string' ? value : ''
@@ -11,39 +11,66 @@ const string = (value: unknown) => typeof value === 'string' ? value : ''
  * It returns the same plan rewritten with canonical Ontology UUIDs, so the UI
  * no longer depends on names once a learner has signed in.
  */
-export async function syncRhythmPlanToOntology(_user: User, plan: KokoRhythmPlan): Promise<KokoRhythmPlan> {
+function isRhythmPlan(value: unknown): value is KokoRhythmPlan {
+  return Boolean(value) && typeof value === 'object' && Array.isArray((value as KokoRhythmPlan).groups)
+}
+
+function shouldFallbackToLegacySync(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  return /sync_ontology_rhythm_plan|sync_rhythm_plan|function .* does not exist|schema cache/i.test(message)
+}
+
+/**
+ * One client request for the complete Rhythm graph. The database applies the
+ * plan atomically, so a refresh can never observe half-created subjects or
+ * half-replaced group memberships. Older databases use the legacy bridge
+ * until migration 013 is applied.
+ */
+export async function syncRhythmPlanToOntology(user: User, plan: KokoRhythmPlan): Promise<KokoRhythmPlan> {
+  try {
+    const canonicalPlan = await runOntologyAction<unknown>('sync_rhythm_plan', { plan })
+    if (!isRhythmPlan(canonicalPlan)) throw new Error('Koko did not receive a valid Rhythm plan.')
+    return canonicalPlan
+  } catch (error) {
+    if (!shouldFallbackToLegacySync(error)) throw error
+    return syncRhythmPlanLegacy(user, plan)
+  }
+}
+
+async function syncRhythmPlanLegacy(_user: User, plan: KokoRhythmPlan): Promise<KokoRhythmPlan> {
   const snapshot = await loadOntologySnapshot()
   const subjectRows = [...snapshot.subjects] as Row[]
   const subjectByName = new Map<string, string>(subjectRows
-    .map((row): [string, string] => [string(row.name), string(row.id)])
+    .map((row): [string, string] => [rhythmIdentity(string(row.name)), string(row.id)])
     .filter(([name, id]) => Boolean(name && id)))
 
-  const allSubjects = Array.from(new Map(plan.groups.flatMap((group) => group.subjects).map((subject) => [subject.name, subject])).values())
+  const allSubjects = Array.from(new Map(plan.groups.flatMap((group) => group.subjects).map((subject) => [rhythmIdentity(subject.name), subject])).values())
   const canonicalSubjects = new Map<string, RhythmSubject>()
   for (const subject of allSubjects) {
-    let id = subjectByName.get(subject.name)
+    const subjectKey = rhythmIdentity(subject.name)
+    let id = subjectByName.get(subjectKey)
     if (!id) {
       const created = await runOntologyAction<Row>('create_subject', { name: subject.name })
       id = string(created.id)
-      subjectByName.set(string(created.name), id)
+      subjectByName.set(rhythmIdentity(string(created.name) || subject.name), id)
     }
     if (!id) throw new Error(`Could not resolve subject ${subject.name}.`)
-    canonicalSubjects.set(subject.name, { id, name: subject.name })
+    canonicalSubjects.set(subjectKey, { id, name: subject.name })
   }
 
   const groupRows = [...snapshot.groups] as Row[]
   const groupByName = new Map<string, string>(groupRows
-    .map((row): [string, string] => [string(row.name), string(row.id)])
+    .map((row): [string, string] => [rhythmIdentity(string(row.name)), string(row.id)])
     .filter(([name, id]) => Boolean(name && id)))
   const cloudGroupIds = new Set(groupRows.map((row) => string(row.id)))
   const canonicalGroupIdByLocalId = new Map<string, string>()
   const canonicalGroups = [] as KokoRhythmPlan['groups']
   for (const group of plan.groups) {
-    let cloudId = cloudGroupIds.has(group.id) ? group.id : groupByName.get(group.name)
+    let cloudId = cloudGroupIds.has(group.id) ? group.id : groupByName.get(rhythmIdentity(group.name))
     if (!cloudId) {
       const created = await runOntologyAction<Row>('create_subject_group', { name: group.name })
       cloudId = string(created.id)
-      groupByName.set(group.name, cloudId)
+      groupByName.set(rhythmIdentity(string(created.name) || group.name), cloudId)
     }
     if (!cloudId) throw new Error(`Could not resolve group ${group.name}.`)
     const existingGroup = groupRows.find((row) => string(row.id) === cloudId)
@@ -51,7 +78,7 @@ export async function syncRhythmPlanToOntology(_user: User, plan: KokoRhythmPlan
       await runOntologyAction('update_subject_group', { groupId: cloudId, name: group.name })
     }
     canonicalGroupIdByLocalId.set(group.id, cloudId)
-    const canonicalGroupSubjects = group.subjects.map((subject) => canonicalSubjects.get(subject.name)).filter((subject): subject is RhythmSubject => Boolean(subject))
+    const canonicalGroupSubjects = group.subjects.map((subject) => canonicalSubjects.get(rhythmIdentity(subject.name))).filter((subject): subject is RhythmSubject => Boolean(subject))
     await runOntologyAction('replace_group_subjects', {
       groupId: cloudId,
       subjectIds: canonicalGroupSubjects.map((subject) => subject.id),
@@ -85,7 +112,7 @@ export async function syncRhythmPlanToOntology(_user: User, plan: KokoRhythmPlan
   const canonicalMaintenance = [] as KokoRhythmPlan['maintenance']
   for (const item of plan.maintenance) {
     const subject = canonicalGroups.flatMap((group) => group.subjects).find((candidate) => candidate.name === item.subjectName)
-      ?? canonicalSubjects.get(item.subjectName)
+      ?? canonicalSubjects.get(rhythmIdentity(item.subjectName))
     if (!subject) continue
     const saved = await runOntologyAction<Row>('set_maintenance_practice', { subjectId: subject.id, minutesPerDay: item.minutes })
     canonicalMaintenance.push({ id: string(saved.id) || item.id, subjectId: subject.id, subjectName: subject.name, minutes: item.minutes })

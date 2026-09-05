@@ -61,6 +61,11 @@ function asString(value: unknown) {
   return typeof value === 'string' ? value : ''
 }
 
+/** The UI treats spacing/case variants as one learner-facing subject. */
+export function rhythmIdentity(value: string) {
+  return value.trim().normalize('NFKC').replace(/\s+/g, ' ').toLocaleLowerCase()
+}
+
 function normalizePlan(value: unknown): KokoRhythmPlan | null {
   if (!value || typeof value !== 'object') return null
   const parsed = value as Partial<KokoRhythmPlan>
@@ -74,14 +79,14 @@ function normalizePlan(value: unknown): KokoRhythmPlan | null {
           ? Array.from(new Map((item.subjects as unknown[]).flatMap((subject) => {
             if (typeof subject === 'string' && subject.trim()) {
               const local = createLocalRhythmSubject(subject)
-              return [[local.id, local] as const]
+              return [[rhythmIdentity(local.name), local] as const]
             }
             if (subject && typeof subject === 'object') {
               const row = subject as Partial<RhythmSubject>
               const name = asString(row.name).trim()
               if (name) {
                 const local = { id: asString(row.id) || createLocalRhythmSubject(name).id, name }
-                return [[local.id, local] as const]
+                return [[rhythmIdentity(local.name), local] as const]
               }
             }
             return []
@@ -90,6 +95,18 @@ function normalizePlan(value: unknown): KokoRhythmPlan | null {
       }
   })
     : []
+  // A concrete subject has one home in Koko Rhythm. Older local snapshots
+  // could preserve the same subject in multiple groups, which later made a
+  // cloud refresh appear to randomly move it. Keep the first explicit home.
+  const assignedSubjectKeys = new Set<string>()
+  for (const group of groups) {
+    group.subjects = group.subjects.filter((subject) => {
+      const key = rhythmIdentity(subject.name)
+      if (assignedSubjectKeys.has(key)) return false
+      assignedSubjectKeys.add(key)
+      return true
+    })
+  }
   if (!groups.length) groups.push({ id: 'group_general', name: 'General', subjects: [createLocalRhythmSubject('General')] })
   const groupIds = new Set(groups.map((group) => group.id))
   const maintenance = Array.isArray(parsed.maintenance)

@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { User } from '@supabase/supabase-js'
 import {
   createDefaultKokoRhythmPlan, createLocalRhythmSubject, createRhythmId,
-  loadKokoRhythmPlan, saveKokoRhythmPlan,
+  loadKokoRhythmPlan, rhythmIdentity, saveKokoRhythmPlan,
   type KokoRhythmPlan, type RhythmMaintenance,
 } from '../lib/rhythm-storage'
 import { loadRhythmPlanFromOntology, syncRhythmPlanToOntology } from '../lib/rhythm-ontology'
@@ -30,41 +30,86 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
   const [maintenanceSubject,    setMaintenanceSubject]    = useState('')
   const [maintenanceMinutes,    setMaintenanceMinutes]    = useState<5|10|15|20>(10)
   const [activePanel,           setActivePanel]           = useState<RhythmPanel|null>(null)
+  const [isSaving,              setIsSaving]              = useState(false)
+  const [saveError,             setSaveError]             = useState('')
   const loadedUserRef   = useRef<string|null|undefined>(undefined)
+  const planRef         = useRef(plan)
   const pendingSaveRef  = useRef<{plan:KokoRhythmPlan;user:User|null}|null>(null)
   const cloudSaveInFlightRef = useRef(false)
   const syncRevisionRef = useRef(0)
   const hydrationRevisionRef = useRef(0)
   const hydratedUserIdRef = useRef<string | null>(null)
+  const saveWaitersRef = useRef<Array<() => void>>([])
+  const saveFailedRef = useRef(false)
+
+  const resolveSaveWaiters = useCallback(() => {
+    const waiters = saveWaitersRef.current.splice(0)
+    waiters.forEach((resolve) => resolve())
+  }, [])
+
+  useEffect(() => { planRef.current = plan }, [plan])
 
   const flushPlanSave = useCallback(() => {
     const pending = pendingSaveRef.current
-    if (cloudSaveInFlightRef.current || !pending?.user || hydratedUserIdRef.current !== pending.user.id) return
+    if (cloudSaveInFlightRef.current) return
+    if (!pending?.user || hydratedUserIdRef.current !== pending.user.id) {
+      if (!pendingSaveRef.current) resolveSaveWaiters()
+      return
+    }
     const revision = syncRevisionRef.current
     const savingUser = pending.user
     const planToSave = pending.plan
     pendingSaveRef.current = null
     cloudSaveInFlightRef.current = true
+    setIsSaving(true)
+    setSaveError('')
+    saveFailedRef.current = false
     // Start the write immediately. A debounced write made a newly created
     // group disappear when a learner refreshed or switched pages too fast.
     void syncRhythmPlanToOntology(savingUser, planToSave).then((canonicalPlan) => {
       if (revision !== syncRevisionRef.current || hydratedUserIdRef.current !== savingUser.id) return
+      planRef.current = canonicalPlan
       setPlan(canonicalPlan)
       saveKokoRhythmPlan(savingUser, canonicalPlan)
     }).catch((error) => {
       console.error('Koko Rhythm cloud save failed:', error)
+      saveFailedRef.current = true
+      setSaveError('Could not save the latest Rhythm change. Please try again.')
     }).finally(() => {
       cloudSaveInFlightRef.current = false
-      flushPlanSave()
+      if (pendingSaveRef.current) flushPlanSave()
+      else {
+        setIsSaving(false)
+        resolveSaveWaiters()
+      }
     })
-  }, [])
+  }, [resolveSaveWaiters])
 
   const queuePlanSave = useCallback((next: KokoRhythmPlan) => {
     saveKokoRhythmPlan(user, next)
     syncRevisionRef.current += 1
+    if (!user) return
     pendingSaveRef.current = { plan: next, user }
     flushPlanSave()
   }, [flushPlanSave, user])
+
+  const waitForPlanSave = useCallback(async () => {
+    flushPlanSave()
+    if (!cloudSaveInFlightRef.current && !pendingSaveRef.current) return
+    await new Promise<void>((resolve) => saveWaitersRef.current.push(resolve))
+  }, [flushPlanSave])
+
+  const closeDrawer = useCallback(async () => {
+    await waitForPlanSave()
+    if (saveFailedRef.current) return
+    setActivePanel(null)
+  }, [waitForPlanSave])
+
+  const retryPlanSave = useCallback(() => {
+    saveFailedRef.current = false
+    setSaveError('')
+    queuePlanSave(planRef.current)
+  }, [queuePlanSave])
 
   useEffect(() => {
     const key = user?.id ?? null
@@ -76,6 +121,7 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
     pendingSaveRef.current = null
     const saved = loadKokoRhythmPlan(user)
     const localPlan = saved ?? createDefaultKokoRhythmPlan(subjects)
+    planRef.current = localPlan
     setPlan(localPlan)
     setReady(false)
     if (!saved) saveKokoRhythmPlan(user, localPlan)
@@ -90,11 +136,13 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
         const cloudPlan = await loadRhythmPlanFromOntology(localPlan)
         if (hydrationRevision !== hydrationRevisionRef.current) return
         const next = cloudPlan ?? localPlan
+        planRef.current = next
         setPlan(next)
         saveKokoRhythmPlan(user, next)
         if (!cloudPlan) {
           const canonicalPlan = await syncRhythmPlanToOntology(user, next)
           if (hydrationRevision !== hydrationRevisionRef.current) return
+          planRef.current = canonicalPlan
           setPlan(canonicalPlan)
           saveKokoRhythmPlan(user, canonicalPlan)
         }
@@ -113,13 +161,16 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
     })()
   }, [subjects, user])
 
-  const updatePlan = (updater: (c: KokoRhythmPlan) => KokoRhythmPlan) => {
-    setPlan(cur => { const next = { ...updater(cur), updatedAt: new Date().toISOString() }; queuePlanSave(next); return next })
-  }
+  const updatePlan = useCallback((updater: (current: KokoRhythmPlan) => KokoRhythmPlan) => {
+    const next = { ...updater(planRef.current), updatedAt: new Date().toISOString() }
+    planRef.current = next
+    setPlan(next)
+    queuePlanSave(next)
+  }, [queuePlanSave])
 
-  const studySubjects               = useMemo(() => Array.from(new Set([...subjects, ...plan.groups.flatMap(group => group.subjects.map(subject => subject.name))])), [plan.groups, subjects])
-  const assignedSubjects            = useMemo(() => new Set(plan.groups.flatMap(g => g.subjects.map(subject => subject.name))), [plan.groups])
-  const unassignedSubjects          = studySubjects.filter(s => !assignedSubjects.has(s))
+  const studySubjects               = useMemo(() => Array.from(new Map([...subjects, ...plan.groups.flatMap(group => group.subjects.map(subject => subject.name))].map(subject => [rhythmIdentity(subject), subject])).values()), [plan.groups, subjects])
+  const assignedSubjects            = useMemo(() => new Set(plan.groups.flatMap(g => g.subjects.map(subject => rhythmIdentity(subject.name)))), [plan.groups])
+  const unassignedSubjects          = studySubjects.filter(s => !assignedSubjects.has(rhythmIdentity(s)))
   const majorGroup                  = plan.groups.find(g => g.id === plan.majorGroupId)
   const minorGroup                  = plan.groups.find(g => g.id === plan.minorGroupId)
   const maintenanceSubjects          = new Set(plan.maintenance.map(m => m.subjectName))
@@ -138,6 +189,7 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
 
   const addGroup = () => {
     const name = newGroupName.trim(); if (!name) return
+    if (plan.groups.some((group) => rhythmIdentity(group.name) === rhythmIdentity(name))) return
     const groupId = createRhythmId('group')
     updatePlan(cur => ({ ...cur, groups: [...cur.groups, { id: groupId, name, subjects: [] }] }))
     setNewGroupName('')
@@ -145,7 +197,7 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
   const addSubject = () => {
     const name = newSubjectName.trim().slice(0, 40)
     const groupId = newSubjectGroupId || plan.groups[0]?.id
-    if (!name || !groupId || studySubjects.some(subject => subject.localeCompare(name, undefined, { sensitivity: 'accent' }) === 0)) return
+    if (!name || !groupId || studySubjects.some(subject => rhythmIdentity(subject) === rhythmIdentity(name))) return
     saveLocalSubjects([...getLocalSubjects(user), name], user)
     updatePlan(cur => ({
       ...cur,
@@ -165,8 +217,10 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
   }
   const toggleSubject = (groupId: string, subject: string) => {
     updatePlan(cur => ({ ...cur, groups: cur.groups.map(g => {
-      if (g.id === groupId) return { ...g, subjects: g.subjects.some(item => item.name === subject) ? g.subjects.filter(item => item.name !== subject) : [...g.subjects, cur.groups.flatMap(item => item.subjects).find(item => item.name === subject) ?? createLocalRhythmSubject(subject)] }
-      return { ...g, subjects: g.subjects.filter(item => item.name !== subject) }
+      const key = rhythmIdentity(subject)
+      const hasSubject = g.subjects.some(item => rhythmIdentity(item.name) === key)
+      if (g.id === groupId) return { ...g, subjects: hasSubject ? g.subjects.filter(item => rhythmIdentity(item.name) !== key) : [...g.subjects.filter(item => rhythmIdentity(item.name) !== key), cur.groups.flatMap(item => item.subjects).find(item => rhythmIdentity(item.name) === key) ?? createLocalRhythmSubject(subject)] }
+      return { ...g, subjects: g.subjects.filter(item => rhythmIdentity(item.name) !== key) }
     }) }))
   }
   const setAnchor = (anchor: 'major'|'minor', value: string) => {
@@ -176,7 +230,7 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
   }
   const addMaintenance = () => {
     if (!maintenanceSubject) return
-    const subject = plan.groups.flatMap(group => group.subjects).find(item => item.name === maintenanceSubject) ?? createLocalRhythmSubject(maintenanceSubject)
+    const subject = plan.groups.flatMap(group => group.subjects).find(item => rhythmIdentity(item.name) === rhythmIdentity(maintenanceSubject)) ?? createLocalRhythmSubject(maintenanceSubject)
     const item: RhythmMaintenance = { id: createRhythmId('maintenance'), subjectId: subject.id, subjectName: subject.name, minutes: maintenanceMinutes }
     updatePlan(cur => ({ ...cur, maintenance: [...cur.maintenance, item] }))
   }
@@ -326,12 +380,12 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
 
       {/* ── Drawer (unchanged logic) ──────────────────────────────── */}
       {activePanel && (
-        <div className="rhythm-drawer-layer" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setActivePanel(null) }}>
+        <div className="rhythm-drawer-layer" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget && !isSaving) void closeDrawer() }}>
           <aside className="rhythm-drawer" role="dialog" aria-modal="true" aria-labelledby="rhythm-drawer-title">
             <div className="rhythm-drawer-grip" aria-hidden />
             <header className="rhythm-drawer-header">
               <div><p className="eyebrow">koko rhythm studio</p><h2 id="rhythm-drawer-title">{panelTitle}</h2></div>
-              <button type="button" aria-label="Close" onClick={() => setActivePanel(null)}><X className="size-4" /></button>
+              <button type="button" aria-label="Close" onClick={() => { void closeDrawer() }} disabled={isSaving}><X className="size-4" /></button>
             </header>
             <nav className="rhythm-drawer-tabs" aria-label="Rhythm editor sections">
               {([['groups', BookOpen, 'Groups'], ['anchors', Sparkles, 'Anchors'], ['maintenance', Droplets, 'Maintain']] as const).map(([panel, Icon, label]) => (
@@ -355,8 +409,8 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
                         </div>
                         <div className="rhythm-editor-subjects">
                           {studySubjects.map(subject => (
-                            <button type="button" key={subject} className={group.subjects.some(item => item.name === subject) ? 'selected' : ''} onClick={() => toggleSubject(group.id, subject)}>
-                              {group.subjects.some(item => item.name === subject) ? '✓' : '+'} {subject}
+                            <button type="button" key={subject} className={group.subjects.some(item => rhythmIdentity(item.name) === rhythmIdentity(subject)) ? 'selected' : ''} onClick={() => toggleSubject(group.id, subject)}>
+                              {group.subjects.some(item => rhythmIdentity(item.name) === rhythmIdentity(subject)) ? '✓' : '+'} {subject}
                             </button>
                           ))}
                         </div>
@@ -413,9 +467,10 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
             </div>
 
             <footer className="rhythm-drawer-footer">
-              <span><SlidersHorizontal className="size-3.5" />changes save automatically</span>
-              <button type="button" onClick={() => setActivePanel(null)}>done <ArrowRight className="size-3.5" /></button>
+              <span><SlidersHorizontal className="size-3.5" />{isSaving ? 'saving your rhythm…' : 'changes save automatically'}</span>
+              <button type="button" onClick={() => { void closeDrawer() }} disabled={isSaving}>{isSaving ? 'saving…' : 'done'} <ArrowRight className="size-3.5" /></button>
             </footer>
+            {saveError && <p className="rhythm-save-error" role="alert">{saveError} <button type="button" onClick={retryPlanSave}>retry</button></p>}
           </aside>
         </div>
       )}

@@ -26,6 +26,11 @@ export function StatsPage() {
   const buildCanonicalSubjects = (entries: CanonicalSubjectDayLog[], ontology: Awaited<ReturnType<typeof loadOntologySnapshot>> | null, incidents: SuspiciousStudyDay[]) => {
     if (!entries.length || incidents.length) return []
     const subjectNameById = new Map((ontology?.subjects ?? []).map((subject) => [String(subject.id), typeof subject.name === 'string' ? subject.name : 'General']))
+    const subjectIdByIdentity = new Map((ontology?.subjects ?? []).flatMap((subject) => {
+      const id = String(subject.id ?? '')
+      const name = typeof subject.name === 'string' ? subject.name : ''
+      return id && name ? [[name.trim().normalize('NFKC').replace(/\s+/g, ' ').toLocaleLowerCase(), id] as const] : []
+    }))
     const groupNameById = new Map((ontology?.groups ?? []).map((group) => [String(group.id), typeof group.name === 'string' ? group.name : '']))
     const groupsBySubjectId = new Map<string, string[]>()
     for (const membership of ontology?.memberships ?? []) {
@@ -33,12 +38,19 @@ export function StatsPage() {
       if (!groupName) continue
       groupsBySubjectId.set(membership.subject_id, [...(groupsBySubjectId.get(membership.subject_id) ?? []), groupName])
     }
-    return entries.map((entry) => ({
-      id: entry.subjectId,
-      name: subjectNameById.get(entry.subjectId) ?? entry.subjectName,
-      days: entry.days,
-      groups: groupsBySubjectId.get(entry.subjectId) ?? [],
-    }))
+    // Old sessions may have no subject_id while new sessions do. Merge those
+    // two representations by normalized display name so one subject never
+    // appears twice in the learner's breakdown.
+    const merged = new Map<string, CanonicalSubjectAnalytics>()
+    for (const entry of entries) {
+      const displayName = subjectNameById.get(entry.subjectId) ?? entry.subjectName
+      const identity = displayName.trim().normalize('NFKC').replace(/\s+/g, ' ').toLocaleLowerCase()
+      const id = subjectIdByIdentity.get(identity) ?? entry.subjectId
+      const current = merged.get(id) ?? { id, name: subjectNameById.get(id) ?? displayName, days: {}, groups: groupsBySubjectId.get(id) ?? [] }
+      for (const [dateKey, minutes] of Object.entries(entry.days)) current.days[dateKey] = (current.days[dateKey] ?? 0) + minutes
+      merged.set(id, current)
+    }
+    return [...merged.values()]
   }
 
   useEffect(() => {
