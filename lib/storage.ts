@@ -9,6 +9,12 @@ export type CanonicalSubjectDayLog = {
   subjectName: string
   days: DayLog
 }
+export type StudyStatsSnapshot = {
+  logs: DayLog
+  intervals: StudyInterval[]
+  subjectLogs: SubjectDayLogs
+  canonicalSubjectLogs: CanonicalSubjectDayLog[]
+}
 export type StudyInterval = {
   id: string
   startedAt: string
@@ -321,6 +327,18 @@ function reconcileSubjectLogsToDaily(subjectLogs: SubjectDayLogs, dailyLogs: Day
   return reconciled
 }
 
+function addLegacyAggregateFallback(subjectLogs: SubjectDayLogs, dailyLogs: DayLog) {
+  const next = Object.fromEntries(Object.entries(subjectLogs).map(([subject, days]) => [subject, { ...days }])) as SubjectDayLogs
+  for (const [dateKey, minutes] of Object.entries(dailyLogs)) {
+    const knownMinutes = Object.values(next).reduce((sum, days) => sum + (days[dateKey] ?? 0), 0)
+    if (knownMinutes === 0 && minutes > 0) {
+      next[DEFAULT_SUBJECT] ??= {}
+      next[DEFAULT_SUBJECT][dateKey] = minutes
+    }
+  }
+  return next
+}
+
 /**
  * Canonical, ID-backed session totals for Ontology-aware consumers. The
  * string-based subject logs above remain the display-compatible fallback for
@@ -351,25 +369,136 @@ export async function loadCanonicalSubjectLogs(user: User | null): Promise<Canon
 }
 
 /**
+ * Load every dataset used by Stats from one coordinated server snapshot.
+ *
+ * Stats used to load daily logs, intervals, and study sessions through three
+ * separate helpers (some of which fetched the same table twice).  A focus
+ * minute could then be visible in one card while another request was still
+ * reading an older view of the account.  This keeps the three presentations
+ * in step and removes the duplicate network work from the Stats route.
+ */
+export async function loadStudyStatsSnapshot(user: User | null): Promise<StudyStatsSnapshot> {
+  if (!user) {
+    const logs = await loadStudyLogs(null)
+    const intervals = getLocalStudyIntervals(null)
+    const subjectLogs = await loadSubjectLogs(null, logs)
+    return { logs, intervals, subjectLogs, canonicalSubjectLogs: [] }
+  }
+
+  const localLogs = getLocalLogs(user)
+  const localIntervals = getLocalStudyIntervals(user)
+  try {
+    const [dailyResponse, intervalResponse, sessionsResponse] = await Promise.all([
+      supabase.from('daily_logs').select('date_key, total_minutes').eq('user_id', user.id),
+      supabase.from('study_intervals').select('id, started_at, ended_at, duration_seconds, timer_mode, mode, subject, subject_id').eq('user_id', user.id),
+      supabase.from('study_sessions').select('id, subject_id, subject, date_key, duration_seconds, completed_at, timer_mode, mode').eq('user_id', user.id),
+    ])
+    if (dailyResponse.error || intervalResponse.error || sessionsResponse.error) throw dailyResponse.error ?? intervalResponse.error ?? sessionsResponse.error
+
+    const rawLogs: DayLog = {}
+    for (const row of dailyResponse.data ?? []) {
+      rawLogs[row.date_key] = Math.min(MAX_DAILY_FOCUS_MINUTES, Math.max(0, Number(row.total_minutes) || 0))
+    }
+    const intervals = (intervalResponse.data ?? []).map((row) => normalizeStudyInterval({
+      id: row.id,
+      startedAt: row.started_at,
+      endedAt: row.ended_at,
+      durationSeconds: row.duration_seconds,
+      timerMode: row.timer_mode,
+      mode: row.mode,
+      subject: row.subject,
+      subjectId: row.subject_id,
+    })).filter((item): item is StudyInterval => Boolean(item))
+    saveLocalStudyIntervals(intervals, user)
+    const logs = reconcileStudyHistory(user, rawLogs, intervals)
+
+    const rawSubjectLogs: SubjectDayLogs = {}
+    const canonicalById = new Map<string, CanonicalSubjectDayLog>()
+    const inferredTimelineIntervals: StudyInterval[] = []
+    for (const row of sessionsResponse.data ?? []) {
+      const subject = typeof row.subject === 'string' && row.subject.trim() ? row.subject.trim() : DEFAULT_SUBJECT
+      const dateKey = typeof row.date_key === 'string' ? row.date_key : ''
+      if (!dateKey) continue
+      const minutes = Math.max(0, Math.round((row.duration_seconds ?? 0) / 60))
+      rawSubjectLogs[subject] ??= {}
+      rawSubjectLogs[subject][dateKey] = (rawSubjectLogs[subject][dateKey] ?? 0) + minutes
+
+      // Legacy records have no ontology ID. Keep them in the same breakdown
+      // with a stable display-only ID instead of dropping their focus time.
+      const subjectId = typeof row.subject_id === 'string' ? row.subject_id : `legacy:${subject}`
+      const current = canonicalById.get(subjectId) ?? { subjectId, subjectName: subject, days: {} }
+      current.days[dateKey] = (current.days[dateKey] ?? 0) + minutes
+      canonicalById.set(subjectId, current)
+
+      // Focus sessions created before timeline persistence existed still have
+      // a trustworthy completion timestamp. Use it only as display evidence
+      // when no real interval overlaps, so old totals regain a useful day
+      // timeline without altering any source data or double-counting minutes.
+      const completedAt = Date.parse(typeof row.completed_at === 'string' ? row.completed_at : '')
+      const durationSeconds = Math.max(0, Math.round(Number(row.duration_seconds) || 0))
+      const startedAt = completedAt - durationSeconds * 1000
+      const mode = row.mode === 'short' || row.mode === 'long' ? row.mode : 'focus'
+      const timerMode = row.timer_mode === 'countdown' ? 'countdown' : 'flow'
+      const overlapsRealInterval = intervals.some((interval) => {
+        if (interval.mode !== mode) return false
+        const intervalStart = Date.parse(interval.startedAt)
+        const intervalEnd = Date.parse(interval.endedAt)
+        return Number.isFinite(intervalStart) && Number.isFinite(intervalEnd) && intervalStart < completedAt && intervalEnd > startedAt
+      })
+      if (typeof row.id === 'string' && durationSeconds >= 5 && Number.isFinite(startedAt) && Number.isFinite(completedAt) && !overlapsRealInterval) {
+        inferredTimelineIntervals.push({
+          id: `session-${row.id}`,
+          startedAt: new Date(startedAt).toISOString(),
+          endedAt: new Date(completedAt).toISOString(),
+          durationSeconds,
+          timerMode,
+          mode,
+          subject,
+          ...(typeof row.subject_id === 'string' ? { subjectId: row.subject_id } : {}),
+        })
+      }
+    }
+    const subjectLogs = reconcileSubjectLogsToDaily(addLegacyAggregateFallback(rawSubjectLogs, logs), logs)
+    saveLocalSubjectLogs(subjectLogs, user)
+    saveLocalSubjects([DEFAULT_SUBJECT, ...Object.keys(subjectLogs)], user)
+    return { logs, intervals: [...intervals, ...inferredTimelineIntervals], subjectLogs, canonicalSubjectLogs: [...canonicalById.values()] }
+  } catch (error) {
+    console.warn('Failed to load coordinated Stats snapshot; using the last verified account data.', error)
+    const [logs, intervals, subjectLogs, canonicalSubjectLogs] = await Promise.all([
+      loadStudyLogs(user),
+      loadStudyIntervals(user),
+      loadSubjectLogs(user),
+      loadCanonicalSubjectLogs(user),
+    ])
+    return {
+      logs: Object.keys(logs).length ? logs : localLogs,
+      intervals: intervals.length ? intervals : localIntervals,
+      subjectLogs,
+      canonicalSubjectLogs,
+    }
+  }
+}
+
+function reconcileStudyHistory(user: User | null, rawLogs: DayLog, intervals: StudyInterval[]) {
+  const detected = defendStudyHistory(rawLogs, intervals)
+  const incidents = detected.suspiciousDays.length ? detected.suspiciousDays : getLocalStudyAnomalies(user)
+  const safeLogs = { ...detected.safeLogs }
+  for (const incident of incidents) {
+    incident.relatedDateKeys.forEach((key, index) => { safeLogs[key] = index === 0 ? incident.suggestedMinutes : 0 })
+  }
+  saveLocalStudyAnomalies(incidents, user)
+  saveLocalLogs(safeLogs, user)
+  return safeLogs
+}
+
+/**
  * Fetch canonical study logs from Supabase for authenticated users.
  */
 export async function loadStudyLogs(user: User | null): Promise<DayLog> {
   const localLogs = getLocalLogs(user)
 
-  const reconcile = (rawLogs: DayLog, intervals: StudyInterval[]) => {
-    const detected = defendStudyHistory(rawLogs, intervals)
-    const incidents = detected.suspiciousDays.length ? detected.suspiciousDays : getLocalStudyAnomalies(user)
-    const safeLogs = { ...detected.safeLogs }
-    for (const incident of incidents) {
-      incident.relatedDateKeys.forEach((key, index) => { safeLogs[key] = index === 0 ? incident.suggestedMinutes : 0 })
-    }
-    saveLocalStudyAnomalies(incidents, user)
-    saveLocalLogs(safeLogs, user)
-    return safeLogs
-  }
-
   if (!user) {
-    return reconcile(localLogs, getLocalStudyIntervals(null))
+    return reconcileStudyHistory(null, localLogs, getLocalStudyIntervals(null))
   }
 
   try {
@@ -380,7 +509,7 @@ export async function loadStudyLogs(user: User | null): Promise<DayLog> {
 
     if (error) {
       console.warn('Supabase fetch error, fallback to local logs:', error)
-      return reconcile(localLogs, getLocalStudyIntervals(user))
+      return reconcileStudyHistory(user, localLogs, getLocalStudyIntervals(user))
     }
 
     const cloudLogs: DayLog = {}
@@ -395,10 +524,10 @@ export async function loadStudyLogs(user: User | null): Promise<DayLog> {
       timerMode: row.timer_mode, mode: row.mode, subject: row.subject, subjectId: row.subject_id,
     })).filter((item): item is StudyInterval => Boolean(item))
     saveLocalStudyIntervals(cloudIntervals, user)
-    return reconcile(cloudLogs, cloudIntervals)
+    return reconcileStudyHistory(user, cloudLogs, cloudIntervals)
   } catch (err) {
     console.error('Failed to load study logs from Supabase:', err)
-    return reconcile(localLogs, getLocalStudyIntervals(user))
+    return reconcileStudyHistory(user, localLogs, getLocalStudyIntervals(user))
   }
 }
 

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import type { User } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
-import { getLocalStudyAnomalies, loadCanonicalSubjectLogs, loadStudyIntervals, loadStudyLogs, loadSubjectLogs, getLocalSubjects, repairStudyIncident, type DayLog, type SubjectDayLogs, type StudyInterval, type SuspiciousStudyDay } from '../lib/storage'
+import { getLocalStudyAnomalies, loadStudyStatsSnapshot, getLocalSubjects, repairStudyIncident, type DayLog, type SubjectDayLogs, type StudyInterval, type SuspiciousStudyDay, type CanonicalSubjectDayLog } from '../lib/storage'
 import { loadPlannerData, type PlannerData } from '../lib/planner-storage'
 import { loadOntologySnapshot } from '../lib/ontology-client'
 import { StatsInsights, type StatsRange } from './stats-insights'
@@ -23,44 +23,49 @@ export function StatsPage() {
   const [suspiciousDays, setSuspiciousDays] = useState<SuspiciousStudyDay[]>([])
   const [rhythmPlan, setRhythmPlan] = useState<KokoRhythmPlan | null>(null)
 
+  const buildCanonicalSubjects = (entries: CanonicalSubjectDayLog[], ontology: Awaited<ReturnType<typeof loadOntologySnapshot>> | null, incidents: SuspiciousStudyDay[]) => {
+    if (!entries.length || incidents.length) return []
+    const subjectNameById = new Map((ontology?.subjects ?? []).map((subject) => [String(subject.id), typeof subject.name === 'string' ? subject.name : 'General']))
+    const groupNameById = new Map((ontology?.groups ?? []).map((group) => [String(group.id), typeof group.name === 'string' ? group.name : '']))
+    const groupsBySubjectId = new Map<string, string[]>()
+    for (const membership of ontology?.memberships ?? []) {
+      const groupName = groupNameById.get(membership.group_id)
+      if (!groupName) continue
+      groupsBySubjectId.set(membership.subject_id, [...(groupsBySubjectId.get(membership.subject_id) ?? []), groupName])
+    }
+    return entries.map((entry) => ({
+      id: entry.subjectId,
+      name: subjectNameById.get(entry.subjectId) ?? entry.subjectName,
+      days: entry.days,
+      groups: groupsBySubjectId.get(entry.subjectId) ?? [],
+    }))
+  }
+
   useEffect(() => {
     let requestId = 0
+    let loadedScope: string | null = null
     const loadData = async (nextUser: User | null) => {
       const currentRequestId = ++requestId
-      const [nextLogs, nextIntervals, nextPlanner, canonicalLogs, ontology] = await Promise.all([
-        loadStudyLogs(nextUser), loadStudyIntervals(nextUser), loadPlannerData(nextUser), loadCanonicalSubjectLogs(nextUser),
+      const [studySnapshot, nextPlanner, ontology] = await Promise.all([
+        loadStudyStatsSnapshot(nextUser), loadPlannerData(nextUser),
         nextUser ? loadOntologySnapshot().catch(() => null) : Promise.resolve(null),
       ])
-      const nextSubjectLogs = await loadSubjectLogs(nextUser, nextLogs)
       if (currentRequestId !== requestId) return
       const incidents = getLocalStudyAnomalies(nextUser)
-      setLogs(nextLogs)
+      setLogs(studySnapshot.logs)
       setSuspiciousDays(incidents)
-      setSubjectLogs(nextSubjectLogs)
-      setIntervals(nextIntervals)
+      setSubjectLogs(studySnapshot.subjectLogs)
+      setIntervals(studySnapshot.intervals)
       setPlanner(nextPlanner)
-      setSubjects((previous) => Array.from(new Set([...previous, ...getLocalSubjects(nextUser), ...Object.keys(nextSubjectLogs)])))
-      if (!ontology || !canonicalLogs.length) {
-        setCanonicalSubjects([])
-        return
-      }
-      const subjectNameById = new Map(ontology.subjects.map((subject) => [String(subject.id), typeof subject.name === 'string' ? subject.name : 'General']))
-      const groupNameById = new Map(ontology.groups.map((group) => [String(group.id), typeof group.name === 'string' ? group.name : '']))
-      const groupsBySubjectId = new Map<string, string[]>()
-      for (const membership of ontology.memberships) {
-        const groupName = groupNameById.get(membership.group_id)
-        if (!groupName) continue
-        groupsBySubjectId.set(membership.subject_id, [...(groupsBySubjectId.get(membership.subject_id) ?? []), groupName])
-      }
-      setCanonicalSubjects(incidents.length ? [] : canonicalLogs.map((entry) => ({
-        id: entry.subjectId,
-        name: subjectNameById.get(entry.subjectId) ?? entry.subjectName,
-        days: entry.days,
-        groups: groupsBySubjectId.get(entry.subjectId) ?? [],
-      })))
+      setSubjects((previous) => Array.from(new Set([...previous, ...getLocalSubjects(nextUser), ...Object.keys(studySnapshot.subjectLogs), ...(ontology?.subjects ?? []).flatMap((subject) => typeof subject.name === 'string' ? [subject.name] : [])])))
+      setCanonicalSubjects(buildCanonicalSubjects(studySnapshot.canonicalSubjectLogs, ontology, incidents))
     }
-    supabase.auth.getSession().then(({ data }) => {
-      const nextUser = data.session?.user ?? null
+    const applyUser = (nextUser: User | null) => {
+      const nextScope = nextUser?.id ?? 'guest'
+      // Supabase emits INITIAL_SESSION as well as getSession() resolving.
+      // Loading both used to double every Stats request on first paint.
+      if (loadedScope === nextScope) return
+      loadedScope = nextScope
       setUser(nextUser)
       setLogs({})
       setSubjectLogs({})
@@ -69,16 +74,10 @@ export function StatsPage() {
       setSubjects(['General'])
       setCanonicalSubjects([])
       void loadData(nextUser)
-    })
+    }
+    supabase.auth.getSession().then(({ data }) => applyUser(data.session?.user ?? null))
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      const nextUser = session?.user ?? null
-      setUser(nextUser)
-      setLogs({})
-      setSubjectLogs({})
-      setIntervals([])
-      setPlanner({ tasks: [], events: [] })
-      setSubjects(['General'])
-      void loadData(nextUser)
+      applyUser(session?.user ?? null)
     })
     return () => { requestId += 1; listener.subscription.unsubscribe() }
   }, [])
@@ -98,12 +97,16 @@ export function StatsPage() {
 
   const handleRepair = async (incident: SuspiciousStudyDay, minutes: number) => {
     await repairStudyIncident(user, incident, minutes)
-    const [nextLogs, nextIntervals] = await Promise.all([loadStudyLogs(user), loadStudyIntervals(user)])
-    const nextSubjectLogs = await loadSubjectLogs(user, nextLogs)
-    setLogs(nextLogs)
-    setSubjectLogs(nextSubjectLogs)
-    setIntervals(nextIntervals)
-    setSuspiciousDays(getLocalStudyAnomalies(user))
+    const [studySnapshot, ontology] = await Promise.all([
+      loadStudyStatsSnapshot(user),
+      user ? loadOntologySnapshot().catch(() => null) : Promise.resolve(null),
+    ])
+    const incidents = getLocalStudyAnomalies(user)
+    setLogs(studySnapshot.logs)
+    setSubjectLogs(studySnapshot.subjectLogs)
+    setIntervals(studySnapshot.intervals)
+    setSuspiciousDays(incidents)
+    setCanonicalSubjects(buildCanonicalSubjects(studySnapshot.canonicalSubjectLogs, ontology, incidents))
   }
 
   return <main className="min-h-screen overflow-hidden px-4 py-7 pb-28 text-ink sm:px-8 lg:px-12"><div className="mx-auto max-w-7xl"><StatsInsights logs={logs} intervals={intervals} subjectLogs={subjectLogs} tasks={planner.tasks} rhythmPlan={rhythmPlan} range={range} onRangeChange={setRange} suspiciousDays={suspiciousDays} onRepairDay={handleRepair} /><SubjectAnalytics subjectLogs={subjectLogs} subjects={subjects} canonicalSubjects={canonicalSubjects} range={range} /></div></main>

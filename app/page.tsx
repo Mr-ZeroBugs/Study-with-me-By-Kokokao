@@ -214,7 +214,17 @@ function TimerPage() {
   // new start timestamp and could make open-ended focus appear to reset.
   const timerOptionsRef = useRef({ running, timerMode, mode, extension, pomodoroMinutes, reminderMinutes, reminderSeconds, soundEnabled, user, selectedSubject, seconds, elapsedSeconds })
   timerOptionsRef.current = { running, timerMode, mode, extension, pomodoroMinutes, reminderMinutes, reminderSeconds, soundEnabled, user, selectedSubject, seconds, elapsedSeconds }
-  const activeIntervalRef = useRef<{ startedAt: number; timerMode: TimerMode; mode: Mode; subject: string; user: User | null; plannedMinutes: number } | null>(null)
+  const activeIntervalRef = useRef<{
+    startedAt: number
+    timerMode: TimerMode
+    mode: Mode
+    subject: string
+    user: User | null
+    plannedMinutes: number
+    /** Total timer seconds already represented before this segment began. */
+    timelineOffsetSeconds: number
+    subjectIdPromise: Promise<string | undefined>
+  } | null>(null)
   const restoredActiveStartedAtRef = useRef<number | null>(null)
   const restoredLastMinuteSyncRef = useRef<number | null>(null)
   const longFocusWarnedRef = useRef(false)
@@ -308,17 +318,24 @@ function TimerPage() {
     // while the timer is winding down, never attribute old focus to the newly
     // signed-in account.
     const intervalUser = activeInterval.user
-    void resolveSubjectId(activeInterval.subject, intervalUser).then((subjectId) => recordStudyInterval(intervalUser, {
+    // Flow writes each completed minute as it happens. Only append the small
+    // unrecorded tail here so pausing never duplicates its timeline blocks.
+    const accountedSeconds = activeInterval.timerMode === 'flow'
+      ? Math.min(durationSeconds, Math.floor(lastMinuteSyncRef.current / 60) * 60)
+      : 0
+    const tailSeconds = durationSeconds - accountedSeconds
+    if (tailSeconds < 5) return
+    void activeInterval.subjectIdPromise.then((subjectId) => recordStudyInterval(intervalUser, {
       id: createStudyIntervalId(),
-      startedAt: new Date(activeInterval.startedAt).toISOString(),
+      startedAt: new Date(activeInterval.startedAt + accountedSeconds * 1000).toISOString(),
       endedAt: new Date(endedAt).toISOString(),
-      durationSeconds,
+      durationSeconds: tailSeconds,
       timerMode: activeInterval.timerMode,
       mode: activeInterval.mode,
       subject: activeInterval.subject,
       subjectId,
     }))
-  }, [resolveSubjectId])
+  }, [])
 
   // 1. Initialize User, Today info, and Load Data
   useEffect(() => {
@@ -477,22 +494,46 @@ function TimerPage() {
 
     const options = timerOptionsRef.current
     const clockStartedAt = Date.now()
-    const startedAt = activeIntervalRef.current?.startedAt ?? restoredActiveStartedAtRef.current ?? clockStartedAt
+    const restoredStartedAt = restoredActiveStartedAtRef.current
+    const startedAt = activeIntervalRef.current?.startedAt ?? restoredStartedAt ?? clockStartedAt
+    const restoredSession = Boolean(restoredStartedAt)
     restoredActiveStartedAtRef.current = null
     timerStartRef.current = clockStartedAt
     baseSecondsRef.current = options.seconds
     baseElapsedRef.current = options.elapsedSeconds
     baseReminderRef.current = options.reminderSeconds
-    lastMinuteSyncRef.current = restoredLastMinuteSyncRef.current ?? options.elapsedSeconds
+    lastMinuteSyncRef.current = restoredSession ? (restoredLastMinuteSyncRef.current ?? options.elapsedSeconds) : 0
     lastReminderCycleRef.current = Math.floor(options.elapsedSeconds / (reminderLengthFor(options.extension, options.reminderMinutes) * 60))
     restoredLastMinuteSyncRef.current = null
-    activeIntervalRef.current = {
+    const activeInterval = {
       startedAt,
       timerMode: options.timerMode,
       mode: options.mode,
       subject: options.selectedSubject,
       user: options.user,
       plannedMinutes: options.timerMode === 'countdown' ? Math.max(1, Math.round(options.seconds / 60)) : 0,
+      timelineOffsetSeconds: restoredSession ? 0 : options.elapsedSeconds,
+      subjectIdPromise: resolveSubjectId(options.selectedSubject, options.user),
+    }
+    activeIntervalRef.current = activeInterval
+    // A refresh may happen after daily totals have already been written but
+    // before the old implementation stored its visual timeline segment. Fill
+    // that verified whole-minute portion once; no extra study minutes are
+    // created here.
+    const restoredWholeSeconds = restoredSession && options.timerMode === 'flow'
+      ? Math.floor(options.elapsedSeconds / 60) * 60
+      : 0
+    if (restoredWholeSeconds >= 60) {
+      void activeInterval.subjectIdPromise.then((subjectId) => recordStudyInterval(options.user, {
+        id: createStudyIntervalId(),
+        startedAt: new Date(startedAt).toISOString(),
+        endedAt: new Date(startedAt + restoredWholeSeconds * 1000).toISOString(),
+        durationSeconds: restoredWholeSeconds,
+        timerMode: 'flow',
+        mode: options.mode,
+        subject: options.selectedSubject,
+        subjectId,
+      }))
     }
 
     const interval = window.setInterval(() => {
@@ -508,14 +549,33 @@ function TimerPage() {
         setElapsedSeconds(currentElapsed)
 
         // Check if a full minute passed during flow study to increment stats
-        const minutesToRecord = Math.floor(currentElapsed / 60) - Math.floor(lastMinuteSyncRef.current / 60)
+        const timelineElapsed = activeInterval.timelineOffsetSeconds === 0 ? currentElapsed : elapsedWallClock
+        const minutesToRecord = Math.floor(timelineElapsed / 60) - Math.floor(lastMinuteSyncRef.current / 60)
         if (minutesToRecord > 0) {
           const fromElapsed = lastMinuteSyncRef.current
-          lastMinuteSyncRef.current = currentElapsed
-          // Attribute each minute to the local calendar day where it happened.
-          recordFocusMinutesByTimeline(activeInterval.user, activeInterval.startedAt, fromElapsed, currentElapsed, 'flow', 'flow', activeInterval.subject).then((updatedLogs) => {
+          lastMinuteSyncRef.current = timelineElapsed
+          const fullMinuteStart = Math.floor(Math.max(0, fromElapsed) / 60) * 60
+          const fullMinuteEnd = Math.floor(Math.max(0, timelineElapsed) / 60) * 60
+          // Record one real start/stop segment alongside the aggregate minute.
+          // This makes refresh-safe totals, the day timeline, and subject
+          // breakdown all describe the same focus minutes.
+          void activeInterval.subjectIdPromise.then(async (subjectId) => {
+            if (fullMinuteEnd > fullMinuteStart) {
+              await recordStudyInterval(activeInterval.user, {
+                id: createStudyIntervalId(),
+                startedAt: new Date(activeInterval.startedAt + fullMinuteStart * 1000).toISOString(),
+                endedAt: new Date(activeInterval.startedAt + fullMinuteEnd * 1000).toISOString(),
+                durationSeconds: fullMinuteEnd - fullMinuteStart,
+                timerMode: 'flow',
+                mode: 'focus',
+                subject: activeInterval.subject,
+                subjectId,
+              })
+            }
+            return recordFocusMinutesByTimeline(activeInterval.user, activeInterval.startedAt, fromElapsed, timelineElapsed, 'flow', 'flow', activeInterval.subject, subjectId)
+          }).then((updatedLogs) => {
             setLogs(updatedLogs)
-          })
+          }).catch(() => {})
         }
 
         if (rawCurrentElapsed >= MAX_CONTINUOUS_FOCUS_SECONDS && threeHourConfirmedRef.current) {
@@ -592,7 +652,7 @@ function TimerPage() {
     }, 250)
 
     return () => window.clearInterval(interval)
-  }, [running, finishActiveInterval, sendTimerAlert])
+  }, [running, finishActiveInterval, sendTimerAlert, resolveSubjectId])
 
   // Save a lightweight snapshot while running so navigation never destroys the
   // active clock. Absolute timestamps account for time spent on other pages.
