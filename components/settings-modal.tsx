@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import {
   X,
-  Palette,
+  Gauge,
   MessageCircle,
   User as UserIcon,
   Check,
@@ -12,9 +12,6 @@ import {
   Unlink,
   ExternalLink,
   Sparkles,
-  Sun,
-  Moon,
-  Feather,
   CheckCircle2,
   AlertCircle,
   Clock,
@@ -29,11 +26,8 @@ import {
   Save,
 } from 'lucide-react'
 import {
-  getStoredTheme,
-  setAppTheme,
-  getIntensityThreshold,
+  loadIntensityThreshold,
   setIntensityThreshold,
-  AppTheme,
 } from '@/lib/theme'
 import { supabase } from '@/lib/supabase'
 import {
@@ -68,8 +62,7 @@ function expiryLabel(expiresAt?: string) {
 }
 
 export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsModalProps) {
-  const [activeTab, setActiveTab] = useState<'theme' | 'line' | 'memory' | 'account'>('theme')
-  const [currentTheme, setCurrentTheme] = useState<AppTheme>('cozy')
+  const [activeTab, setActiveTab] = useState<'study' | 'line' | 'memory' | 'account'>('study')
   const [intensityMinutes, setIntensityMinutes] = useState(90)
 
   // LINE Connection state
@@ -95,8 +88,7 @@ export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsMod
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden'
-      setCurrentTheme(getStoredTheme())
-      setIntensityMinutes(getIntensityThreshold())
+      void loadIntensityThreshold(user).then(setIntensityMinutes).catch(() => setIntensityMinutes(90))
       if (user) {
         checkLineStatus()
         void refreshMemory()
@@ -280,15 +272,10 @@ export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsMod
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const handleThemeChange = (theme: AppTheme) => {
-    setCurrentTheme(theme)
-    setAppTheme(theme)
-  }
-
   const handleIntensityChange = (minutes: number) => {
     const safe = Math.max(15, Math.min(360, Math.round(minutes)))
     setIntensityMinutes(safe)
-    setIntensityThreshold(safe)
+    void setIntensityThreshold(user, safe).catch((saveError) => console.error('Failed to save study preference:', saveError))
   }
 
   const handleSignOut = async () => {
@@ -328,7 +315,7 @@ export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsMod
             <div>
               <p className="eyebrow">workspace preferences</p>
               <h2 id="settings-modal-title" className="settings-modal-h2">Settings</h2>
-              <p className="settings-modal-subtitle">Make your study space feel like yours.</p>
+              <p className="settings-modal-subtitle">Your cozy study space, with only the controls that matter.</p>
             </div>
           </div>
           <button onClick={onClose} className="settings-close-btn" aria-label="Close modal"><X className="size-4" /></button>
@@ -337,7 +324,7 @@ export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsMod
         {/* Tab Switcher */}
         <nav className="settings-tab-bar" aria-label="Settings sections">
           {[
-            { id: 'theme', label: 'Theme', icon: Palette },
+            { id: 'study', label: 'Study', icon: Gauge },
             { id: 'line', label: 'LINE Bot', icon: MessageCircle },
             { id: 'memory', label: 'Memory', icon: Brain },
             { id: 'account', label: 'Account', icon: UserIcon },
@@ -356,31 +343,11 @@ export function SettingsModal({ isOpen, onClose, user, onOpenAuth }: SettingsMod
         </nav>
 
         <div className="settings-modal-body">
-        {/* Tab 1: THEME & INTENSITY */}
-        {activeTab === 'theme' && (
+        {/* Tab 1: STUDY */}
+        {activeTab === 'study' && (
           <div className="settings-section">
-            {/* Theme Grid */}
             <div className="settings-section-gap">
-              <div className="settings-section-heading"><div><p className="settings-section-kicker">appearance</p><h3>Choose your atmosphere</h3></div><Palette className="size-4" /></div>
-              <div className="settings-theme-grid">
-                {[
-                  { id: 'cozy', label: 'Cozy Paper', description: 'Warm, soft, and familiar', icon: Feather },
-                  { id: 'light', label: 'Light Glass', description: 'Clean and airy', icon: Sun },
-                  { id: 'dark-glass', label: 'Dark Glass', description: 'Quiet focus after dark', icon: Moon },
-                ].map(({ id, label, description, icon: Icon }) => (
-                  <button
-                    key={id}
-                    onClick={() => handleThemeChange(id as AppTheme)}
-                    data-active={currentTheme === id ? 'true' : 'false'}
-                    className={`settings-theme-card ${currentTheme === id ? `settings-theme-card--active settings-theme-card--active-${id === 'cozy' ? 'cozy' : id === 'light' ? 'light' : 'dark'}` : ''}`}
-                    aria-pressed={currentTheme === id}
-                  >
-                    <span className={`settings-theme-icon settings-theme-icon--${id === 'dark-glass' ? 'dark' : id}`}><Icon className="size-4.5" /></span>
-                    <span className="settings-theme-name-row"><strong className={`settings-theme-name ${id === 'dark-glass' ? 'settings-theme-name--dark' : ''}`}>{label}</strong>{currentTheme === id && <span className={`settings-theme-check settings-theme-check--${id === 'dark-glass' ? 'dark' : id === 'light' ? 'light' : 'cozy'}`}><Check className="size-3" /></span>}</span>
-                    <span className={`settings-theme-desc ${id === 'dark-glass' ? 'settings-theme-desc--dark' : ''}`}>{description}</span>
-                  </button>
-                ))}
-              </div>
+              <div className="settings-section-heading"><div><p className="settings-section-kicker">koko.study</p><h3>Cozy Paper</h3><p className="settings-intensity-desc">One calm visual language across every part of your study space.</p></div><Sparkles className="size-4" /></div>
             </div>
 
             {/* Intensity Setting */}

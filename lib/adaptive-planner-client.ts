@@ -2,22 +2,16 @@ import type { User } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import type { PlannerBehaviorEvent, PlannerBehaviorType } from '@/lib/adaptive-planner'
 
-const STORAGE_KEY = 'koko_planner_behavior_v1'
-
-function key(user: User | null) { return user?.id ? `${STORAGE_KEY}_${user.id}` : STORAGE_KEY }
+const behaviorMemory = new Map<string, PlannerBehaviorEvent[]>()
+function key(user: User | null) { return user?.id ?? 'guest' }
 function eventId() { return typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `behavior_${Date.now()}_${Math.random().toString(16).slice(2)}` }
 
 function loadLocal(user: User | null): PlannerBehaviorEvent[] {
-  if (typeof window === 'undefined') return []
-  try {
-    const parsed = JSON.parse(localStorage.getItem(key(user)) ?? '[]')
-    return Array.isArray(parsed) ? parsed.filter((event): event is PlannerBehaviorEvent => event && typeof event.id === 'string' && (event.type === 'next_action_accepted' || event.type === 'task_completed') && typeof event.subject === 'string' && typeof event.occurredAt === 'string').slice(-250) : []
-  } catch { return [] }
+  return behaviorMemory.get(key(user)) ?? []
 }
 
 function saveLocal(user: User | null, events: PlannerBehaviorEvent[]) {
-  if (typeof window === 'undefined') return
-  try { localStorage.setItem(key(user), JSON.stringify(events.slice(-250))) } catch {}
+  behaviorMemory.set(key(user), events.slice(-250))
 }
 
 function mergeEvents(...sets: PlannerBehaviorEvent[][]) {
@@ -40,9 +34,9 @@ export async function loadPlannerBehaviorEvents(user: User | null) {
     const cloud = data.flatMap((row): PlannerBehaviorEvent[] => row.event_type === 'next_action_accepted' || row.event_type === 'task_completed'
       ? [{ id: row.id, type: row.event_type, subject: row.subject || 'General', ...(typeof row.task_id === 'string' ? { taskId: row.task_id } : {}), occurredAt: row.occurred_at }]
       : [])
-    const merged = mergeEvents(local, cloud)
-    saveLocal(user, merged)
-    return merged
+    const canonical = mergeEvents(cloud)
+    saveLocal(user, canonical)
+    return canonical
   } catch { return local }
 }
 

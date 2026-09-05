@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarClock, Check, Circle, Plus, Sparkles, Trash2 } from 'lucide-react'
 import type { User } from '@supabase/supabase-js'
 import { getLocalDateKey } from '../lib/storage'
@@ -13,8 +13,10 @@ import {
   removePlannerRecord,
   saveLocalSharedPlannerData,
   saveLocalPlannerData,
-  syncSharedPlannerData,
-  syncPlannerData,
+  syncSharedPlannerEvent,
+  syncSharedPlannerTask,
+  syncPlannerEvent,
+  syncPlannerTask,
   type PlannerData,
   type PlannerEvent,
   type PlannerEventType,
@@ -23,7 +25,8 @@ import {
   type SharedWorkspaceMember,
   type TaskPriority,
 } from '../lib/planner-storage'
-import { loadKokoRhythmPlan, rhythmRoleForSubject, type KokoRhythmPlan } from '../lib/rhythm-storage'
+import { createDefaultKokoRhythmPlan, loadKokoRhythmPlan, rhythmRoleForSubject, saveKokoRhythmPlan, type KokoRhythmPlan } from '../lib/rhythm-storage'
+import { loadRhythmPlanFromOntology } from '../lib/rhythm-ontology'
 import { ensureOntologySubject } from '../lib/ontology-client'
 import { findExactOpenDuplicate, prepareTaskInput } from '../lib/task-intelligence'
 import { adaptiveSubjectBoost, buildAdaptiveSignals, type AdaptiveSignals, type PlannerBehaviorEvent } from '../lib/adaptive-planner'
@@ -120,7 +123,13 @@ export function PlannerHub({
   const [eventTitle, setEventTitle] = useState('')
   const [eventDate, setEventDate] = useState('')
   const [eventType, setEventType] = useState<PlannerEventType>('important')
+  const persistenceQueueRef = useRef<Promise<void>>(Promise.resolve())
   const activeWorkspace = useMemo(() => workspaces.find((workspace) => workspace.id === workspaceId) ?? null, [workspaces, workspaceId])
+
+  const enqueuePersistence = useCallback((write: () => Promise<void>) => {
+    const next = persistenceQueueRef.current.catch(() => {}).then(write)
+    persistenceQueueRef.current = next
+  }, [])
 
   useEffect(() => {
     setData(emptyData)
@@ -131,7 +140,7 @@ export function PlannerHub({
     let active = true
     let loading = false
 
-    const refresh = async (syncLocalRecords = false) => {
+    const refresh = async () => {
       if (loading) return
       loading = true
       try {
@@ -141,19 +150,12 @@ export function PlannerHub({
         if (!active) return
         setData(next)
         setLoaded(true)
-        // Initial load uploads any local-only records into the active scope.
-        // Later background refreshes only read, so a stale tab never writes
-        // over a completion made from LINE or another shared member.
-        if (syncLocalRecords && user) {
-          if (workspaceId) void syncSharedPlannerData(user, workspaceId, next)
-          else void syncPlannerData(user, next)
-        }
       } finally {
         loading = false
       }
     }
 
-    void refresh(true)
+    void refresh()
 
     // LINE actions happen outside this tab. Refresh when the user returns to
     // the page, and poll while visible so an already-open page catches the
@@ -174,11 +176,17 @@ export function PlannerHub({
   }, [user, workspaceId])
 
   useEffect(() => {
+    let active = true
     setRhythmPlan(loadKokoRhythmPlan(user))
+    if (user) void loadRhythmPlanFromOntology(createDefaultKokoRhythmPlan(subjects)).then((cloudPlan) => {
+      if (!active || !cloudPlan) return
+      saveKokoRhythmPlan(user, cloudPlan)
+      setRhythmPlan(cloudPlan)
+    }).catch(() => {})
     const refreshRhythm = () => setRhythmPlan(loadKokoRhythmPlan(user))
     window.addEventListener('koko-rhythm-updated', refreshRhythm)
-    return () => window.removeEventListener('koko-rhythm-updated', refreshRhythm)
-  }, [user])
+    return () => { active = false; window.removeEventListener('koko-rhythm-updated', refreshRhythm) }
+  }, [subjects, user])
 
   useEffect(() => {
     let active = true
@@ -186,14 +194,22 @@ export function PlannerHub({
     return () => { active = false }
   }, [user])
 
-  const persist = (next: PlannerData) => {
+  const persist = (next: PlannerData, changed?: { kind: 'task'; value: PlannerTask } | { kind: 'event'; value: PlannerEvent }) => {
     setData(next)
     if (workspaceId && user) {
       saveLocalSharedPlannerData(workspaceId, next)
-      void syncSharedPlannerData(user, workspaceId, next)
     } else {
       saveLocalPlannerData(next, user)
-      void syncPlannerData(user, next)
+    }
+    if (!changed || !user) return
+    if (workspaceId && changed.kind === 'task') {
+      enqueuePersistence(() => syncSharedPlannerTask(user, workspaceId, changed.value))
+    } else if (workspaceId && changed.kind === 'event') {
+      enqueuePersistence(() => syncSharedPlannerEvent(user, workspaceId, changed.value))
+    } else if (changed.kind === 'task') {
+      enqueuePersistence(() => syncPlannerTask(user, changed.value))
+    } else {
+      enqueuePersistence(() => syncPlannerEvent(user, changed.value))
     }
   }
 
@@ -212,17 +228,20 @@ export function PlannerHub({
       return
     }
     const task: PlannerTask = { id: createPlannerId(), title: prepared.title, subject: prepared.subject, dueDate: taskDue, estimatedMinutes: taskMinutes, priority: taskPriority, completed: false, createdAt: new Date().toISOString(), normalizedTitle: prepared.normalizedTitle, subjectKey: prepared.subjectKey, deadlineConfidence: prepared.deadlineConfidence }
-    persist({ ...data, tasks: [task, ...data.tasks] })
+    persist({ ...data, tasks: [task, ...data.tasks] }, { kind: 'task', value: task })
     if (user) {
       void ensureOntologySubject(task.subject).then((subjectId) => {
         setData((current) => {
           const next = { ...current, tasks: current.tasks.map((item) => item.id === task.id ? { ...item, subjectId } : item) }
           if (workspaceId) {
             saveLocalSharedPlannerData(workspaceId, next)
-            void syncSharedPlannerData(user, workspaceId, next)
           } else {
             saveLocalPlannerData(next, user)
-            void syncPlannerData(user, next)
+          }
+          const enrichedTask = next.tasks.find((item) => item.id === task.id)
+          if (enrichedTask) {
+            if (workspaceId) enqueuePersistence(() => syncSharedPlannerTask(user, workspaceId, enrichedTask))
+            else enqueuePersistence(() => syncPlannerTask(user, enrichedTask))
           }
           return next
         })
@@ -238,36 +257,83 @@ export function PlannerHub({
     const currentTask = data.tasks.find((task) => task.id === id)
     if (!currentTask || (!workspaceId && currentTask.sourceWorkspaceId)) return
     if (!currentTask.completed) void recordPlannerBehaviorEvent(user, { type: 'task_completed', subject: currentTask.subject, taskId: currentTask.id }).then((event) => setBehaviorEvents((current) => [...current, event].slice(-250)))
-    persist({ ...data, tasks: data.tasks.map((task) => task.id === id ? { ...task, completed: !task.completed } : task) })
+    const nextTask = { ...currentTask, completed: !currentTask.completed }
+    persist({ ...data, tasks: data.tasks.map((task) => task.id === id ? nextTask : task) }, { kind: 'task', value: nextTask })
   }
 
   const deleteTask = (id: string) => {
     if (!workspaceId && data.tasks.find((task) => task.id === id)?.sourceWorkspaceId) return
     persist({ ...data, tasks: data.tasks.filter((task) => task.id !== id) })
-    if (workspaceId && user) void removeSharedPlannerRecord(user, workspaceId, 'planner_tasks', id)
-    else void removePlannerRecord(user, 'planner_tasks', id)
+    if (workspaceId && user) enqueuePersistence(() => removeSharedPlannerRecord(user, workspaceId, 'planner_tasks', id))
+    else if (user) enqueuePersistence(() => removePlannerRecord(user, 'planner_tasks', id))
+  }
+
+  const updateTask = (id: string, changes: Pick<PlannerTask, 'title' | 'subject' | 'dueDate' | 'estimatedMinutes' | 'priority'>) => {
+    const currentTask = data.tasks.find((task) => task.id === id)
+    if (!currentTask || (!workspaceId && currentTask.sourceWorkspaceId)) return
+    const prepared = prepareTaskInput({ title: changes.title, subject: changes.subject, dueDate: changes.dueDate, deadlineConfidence: changes.dueDate ? 'explicit' : 'none' })
+    const nextTask: PlannerTask = {
+      ...currentTask,
+      ...changes,
+      title: prepared.title,
+      subject: prepared.subject,
+      dueDate: changes.dueDate,
+      estimatedMinutes: Math.min(480, Math.max(5, Math.round(changes.estimatedMinutes || 25))),
+      priority: changes.priority,
+      normalizedTitle: prepared.normalizedTitle,
+      subjectKey: prepared.subjectKey,
+      deadlineConfidence: prepared.deadlineConfidence,
+    }
+    persist({ ...data, tasks: data.tasks.map((task) => task.id === id ? nextTask : task) }, { kind: 'task', value: nextTask })
+    if (user) {
+      void ensureOntologySubject(nextTask.subject).then((subjectId) => {
+        setData((current) => {
+          const next = { ...current, tasks: current.tasks.map((task) => task.id === id ? { ...task, subjectId } : task) }
+          if (workspaceId) {
+            saveLocalSharedPlannerData(workspaceId, next)
+          } else {
+            saveLocalPlannerData(next, user)
+          }
+          const enrichedTask = next.tasks.find((task) => task.id === id)
+          if (enrichedTask) {
+            if (workspaceId) enqueuePersistence(() => syncSharedPlannerTask(user, workspaceId, enrichedTask))
+            else enqueuePersistence(() => syncPlannerTask(user, enrichedTask))
+          }
+          return next
+        })
+      }).catch(() => {})
+    }
   }
 
   const addEvent = () => {
     const title = eventTitle.trim()
     if (!title || !eventDate) return
     const event: PlannerEvent = { id: createPlannerId(), title, eventDate, type: eventType, notes: '', createdAt: new Date().toISOString() }
-    persist({ ...data, events: [...data.events, event] })
+    persist({ ...data, events: [...data.events, event] }, { kind: 'event', value: event })
     setEventTitle('')
   }
 
   const deleteEvent = (id: string) => {
     if (!workspaceId && data.events.find((event) => event.id === id)?.sourceWorkspaceId) return
     persist({ ...data, events: data.events.filter((event) => event.id !== id) })
-    if (workspaceId && user) void removeSharedPlannerRecord(user, workspaceId, 'planner_events', id)
-    else void removePlannerRecord(user, 'planner_events', id)
+    if (workspaceId && user) enqueuePersistence(() => removeSharedPlannerRecord(user, workspaceId, 'planner_events', id))
+    else if (user) enqueuePersistence(() => removePlannerRecord(user, 'planner_events', id))
+  }
+
+  const updateEvent = (id: string, changes: Pick<PlannerEvent, 'title' | 'eventDate' | 'type' | 'notes'>) => {
+    const currentEvent = data.events.find((event) => event.id === id)
+    if (!currentEvent || (!workspaceId && currentEvent.sourceWorkspaceId)) return
+    const title = changes.title.trim().slice(0, 160)
+    if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(changes.eventDate)) return
+    const nextEvent = { ...currentEvent, ...changes, title }
+    persist({ ...data, events: data.events.map((event) => event.id === id ? nextEvent : event) }, { kind: 'event', value: nextEvent })
   }
 
   const sectionTitle = section === 'tasks' ? 'to do & deadlines' : section === 'events' ? 'important dates' : section === 'planner' ? 'planner notebook' : 'planning hub'
   const sectionDescription = section === 'tasks' ? 'Turn every deadline into a next step you can actually start.' : section === 'events' ? 'Keep competitions, exams, project dates, and important moments in sight.' : section === 'planner' ? 'One notebook for tasks, deadlines, and the dates you cannot miss.' : 'Plan the next task and remember the dates that matter.'
 
   if (section === 'tasks' || section === 'planner') return <>
-    <TaskNotebook user={user} data={data} showEvents={section === 'planner'} loaded={loaded} openTasks={openTasks} subjects={subjects} rhythmPlan={rhythmPlan} taskTitle={taskTitle} taskSubject={taskSubject} taskDue={taskDue} taskMinutes={taskMinutes} taskPriority={taskPriority} taskHint={taskHint} eventTitle={eventTitle} eventDate={eventDate} eventType={eventType} setTaskTitle={setTaskTitle} setTaskSubject={setTaskSubject} setTaskDue={setTaskDue} setTaskMinutes={setTaskMinutes} setTaskPriority={setTaskPriority} setEventTitle={setEventTitle} setEventDate={setEventDate} setEventType={setEventType} addTask={addTask} addEvent={addEvent} toggleTask={toggleTask} deleteTask={deleteTask} deleteEvent={deleteEvent} workspaceId={workspaceId} workspace={activeWorkspace} workspaces={workspaces} onWorkspaceChange={onWorkspaceChange} onCreateWorkspace={onCreateWorkspace} onJoinWorkspace={onJoinWorkspace} onLeaveWorkspace={onLeaveWorkspace} onDeleteWorkspace={onDeleteWorkspace} workspaceMembers={workspaceMembers} workspaceMembersLoading={workspaceMembersLoading} workspaceLoading={workspaceLoading} workspaceError={workspaceError} onUserChange={onUserChange} />
+    <TaskNotebook user={user} data={data} showEvents={section === 'planner'} loaded={loaded} openTasks={openTasks} subjects={subjects} rhythmPlan={rhythmPlan} taskTitle={taskTitle} taskSubject={taskSubject} taskDue={taskDue} taskMinutes={taskMinutes} taskPriority={taskPriority} taskHint={taskHint} eventTitle={eventTitle} eventDate={eventDate} eventType={eventType} setTaskTitle={setTaskTitle} setTaskSubject={setTaskSubject} setTaskDue={setTaskDue} setTaskMinutes={setTaskMinutes} setTaskPriority={setTaskPriority} setEventTitle={setEventTitle} setEventDate={setEventDate} setEventType={setEventType} addTask={addTask} addEvent={addEvent} toggleTask={toggleTask} deleteTask={deleteTask} deleteEvent={deleteEvent} updateTask={updateTask} updateEvent={updateEvent} workspaceId={workspaceId} workspace={activeWorkspace} workspaces={workspaces} onWorkspaceChange={onWorkspaceChange} onCreateWorkspace={onCreateWorkspace} onJoinWorkspace={onJoinWorkspace} onLeaveWorkspace={onLeaveWorkspace} onDeleteWorkspace={onDeleteWorkspace} workspaceMembers={workspaceMembers} workspaceMembersLoading={workspaceMembersLoading} workspaceLoading={workspaceLoading} workspaceError={workspaceError} onUserChange={onUserChange} />
   </>
 
 

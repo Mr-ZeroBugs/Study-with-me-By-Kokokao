@@ -2,15 +2,13 @@
 
 import Link from 'next/link'
 import {
-  ArrowUpRight, CalendarDays, CheckCircle2, Circle,
-  Flag, MessageCircle,
+  ArrowUpRight, CalendarDays, MessageCircle,
   Sparkles, Timer, Zap,
   ClipboardPenLine, BarChart3,
   BellRing, X,
 } from 'lucide-react'
 import type { User } from '@supabase/supabase-js'
 import type { PlannerEvent, PlannerTask } from '../lib/planner-storage'
-import { type QuestDef, type QuestData, type GameState } from '../lib/gamification'
 import type { SubjectDayLogs } from '../lib/storage'
 import { setPendingFocusSubject, type NextBestAction } from '../lib/next-best-action'
 import type { KokoPresentation } from '../lib/personalization'
@@ -22,17 +20,7 @@ type Props = {
   now: Date
   user: User | null
   todayMinutes: number
-  totalMinutes: number
   streak: number
-  level: number
-  xpIntoLevel: number
-  xpToNextLevel: number
-  xpProgress: number
-  gameState: GameState
-  quests: QuestDef[]
-  questData: QuestData
-  weekMinutes: number
-  weekTimeLeft: string
   todayTasks: PlannerTask[]
   openTasks: PlannerTask[]
   completedTodayCount: number
@@ -287,51 +275,6 @@ function FocusMixCard({ subjectLogs }: { subjectLogs: SubjectDayLogs }) {
   )
 }
 
-function OpenTasksCard({ tasks, now }: { tasks: PlannerTask[]; now: Date }) {
-  const show = tasks.slice(0, 4)
-  return (
-    <div className="hd-card hd-tasks">
-      <div className="hd-card-top">
-        <p className="hd-eyebrow">next on your plate</p>
-        <CheckCircle2 className="size-4 hd-card-icon" />
-      </div>
-      <h2 className="hd-card-title">open tasks</h2>
-      <div className="hd-open-list">
-        {show.length === 0 ? (
-          <p className="hd-empty">All clear — nothing open right now.</p>
-        ) : show.map(t => (
-          <div key={t.id} className="hd-open-row">
-            <Circle className="size-3.5 hd-open-circle" />
-            <div className="hd-open-body">
-              <span className="hd-open-title">{t.title}</span>
-              <span className="hd-open-meta">{t.dueDate && relDate(t.dueDate, now)} · {t.subject}</span>
-            </div>
-            <ArrowUpRight className="size-3 hd-task-arr" />
-          </div>
-        ))}
-      </div>
-      <Link href="/tasks" className="hd-card-foot-link">VIEW TASK NOTEBOOK <ArrowUpRight className="size-3" /></Link>
-    </div>
-  )
-}
-
-function RhythmCard() {
-  return (
-    <div className="hd-card hd-goal">
-      <div className="hd-card-top">
-        <div>
-          <p className="hd-eyebrow">the bigger picture</p>
-          <h2 className="hd-card-title">one goal at a time</h2>
-        </div>
-        <Flag className="size-4 hd-card-icon" />
-      </div>
-      <p className="hd-goal-name">Build a rhythm that fits you.</p>
-      <p className="hd-goal-meta">Choose one Major and one Minor, then let the rest stay lighter.</p>
-      <Link href="/goals" className="hd-card-foot-link">OPEN KOKO RHYTHM <ArrowUpRight className="size-3" /></Link>
-    </div>
-  )
-}
-
 function UpcomingCard({ events }: { events: PlannerEvent[] }) {
   const show = events.slice(0, 3)
   return (
@@ -417,8 +360,6 @@ export function KokoRoom({
           </div>
           <div className="hd-secondary-grid">
             <FocusMixCard subjectLogs={subjectLogs} />
-            <OpenTasksCard tasks={openTasks} now={now} />
-            <RhythmCard />
           </div>
         </div>
 

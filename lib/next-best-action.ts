@@ -10,7 +10,7 @@ export type NextBestAction = {
   role: RhythmRole
 }
 
-const PENDING_FOCUS_SUBJECT_KEY = 'koko_pending_focus_subject_v1'
+let pendingFocusSubject = ''
 
 function localDayDifference(dueDate: string, todayKey: string) {
   if (!dueDate) return null
@@ -79,13 +79,11 @@ export function chooseNextBestAction(input: {
 }
 
 export function setPendingFocusSubject(subject: string) {
-  if (typeof window === 'undefined' || !subject.trim()) return
-  window.localStorage.setItem(PENDING_FOCUS_SUBJECT_KEY, subject.trim())
+  pendingFocusSubject = subject.trim()
 }
 
 export function takePendingFocusSubject() {
-  if (typeof window === 'undefined') return null
-  const subject = window.localStorage.getItem(PENDING_FOCUS_SUBJECT_KEY)?.trim() || null
-  window.localStorage.removeItem(PENDING_FOCUS_SUBJECT_KEY)
+  const subject = pendingFocusSubject || null
+  pendingFocusSubject = ''
   return subject
 }

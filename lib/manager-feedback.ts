@@ -13,10 +13,9 @@ export type ManagerFeedbackEvent = {
   occurredAt: string
 }
 
-const STORAGE_KEY = 'koko_manager_feedback_v1'
 const MAX_EVENTS = 120
-
-function storageKey(user: User | null) { return user?.id ? `${STORAGE_KEY}_${user.id}` : STORAGE_KEY }
+const feedbackMemory = new Map<string, ManagerFeedbackEvent[]>()
+function storageKey(user: User | null) { return user?.id ?? 'guest' }
 function randomId() { return typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `feedback_${Date.now()}_${Math.random().toString(16).slice(2)}` }
 
 function normalize(value: unknown): ManagerFeedbackEvent | null {
@@ -33,16 +32,11 @@ function normalize(value: unknown): ManagerFeedbackEvent | null {
 }
 
 function localFeedback(user: User | null) {
-  if (typeof window === 'undefined') return [] as ManagerFeedbackEvent[]
-  try {
-    const raw = JSON.parse(window.localStorage.getItem(storageKey(user)) ?? '[]')
-    return Array.isArray(raw) ? raw.map(normalize).filter((event): event is ManagerFeedbackEvent => Boolean(event)).slice(-MAX_EVENTS) : []
-  } catch { return [] }
+  return feedbackMemory.get(storageKey(user)) ?? []
 }
 
 function saveLocalFeedback(user: User | null, events: ManagerFeedbackEvent[]) {
-  if (typeof window === 'undefined') return
-  try { window.localStorage.setItem(storageKey(user), JSON.stringify(events.slice(-MAX_EVENTS))) } catch {}
+  feedbackMemory.set(storageKey(user), events.slice(-MAX_EVENTS))
 }
 
 function mergeFeedback(...sets: ManagerFeedbackEvent[][]) {
@@ -65,9 +59,9 @@ export async function loadManagerFeedback(user: User | null): Promise<ManagerFee
     if (!response.ok) return local
     const payload = await response.json().catch(() => ({})) as { events?: unknown[] }
     const remote = Array.isArray(payload.events) ? payload.events.map(normalize).filter((event): event is ManagerFeedbackEvent => Boolean(event)) : []
-    const merged = mergeFeedback(local, remote)
-    saveLocalFeedback(user, merged)
-    return merged
+    const canonical = mergeFeedback(remote)
+    saveLocalFeedback(user, canonical)
+    return canonical
   } catch { return local }
 }
 
@@ -82,8 +76,7 @@ export async function recordManagerFeedback(user: User | null, input: Omit<Manag
         body: JSON.stringify(event),
       })
     } catch {
-      // Feedback never blocks the learner's selected action. Local storage is
-      // sufficient until a later successful read syncs the current device.
+      // Feedback never blocks the learner's selected action.
     }
   }
   return event

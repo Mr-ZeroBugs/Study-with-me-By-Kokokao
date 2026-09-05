@@ -8,7 +8,8 @@ import { loadPlannerData, type PlannerData } from '../lib/planner-storage'
 import { loadOntologySnapshot } from '../lib/ontology-client'
 import { StatsInsights, type StatsRange } from './stats-insights'
 import { SubjectAnalytics, type CanonicalSubjectAnalytics } from './subject-analytics'
-import { loadKokoRhythmPlan, RHYTHM_UPDATED_EVENT, type KokoRhythmPlan } from '../lib/rhythm-storage'
+import { createDefaultKokoRhythmPlan, loadKokoRhythmPlan, RHYTHM_UPDATED_EVENT, saveKokoRhythmPlan, type KokoRhythmPlan } from '../lib/rhythm-storage'
+import { loadRhythmPlanFromOntology } from '../lib/rhythm-ontology'
 
 export function StatsPage() {
   const [logs, setLogs] = useState<DayLog>({})
@@ -83,11 +84,17 @@ export function StatsPage() {
   }, [])
 
   useEffect(() => {
+    let active = true
     const refreshRhythm = () => setRhythmPlan(loadKokoRhythmPlan(user))
     refreshRhythm()
+    if (user) void loadRhythmPlanFromOntology(createDefaultKokoRhythmPlan(subjects)).then((cloudPlan) => {
+      if (!active || !cloudPlan) return
+      saveKokoRhythmPlan(user, cloudPlan)
+      setRhythmPlan(cloudPlan)
+    }).catch(() => {})
     window.addEventListener(RHYTHM_UPDATED_EVENT, refreshRhythm)
-    return () => window.removeEventListener(RHYTHM_UPDATED_EVENT, refreshRhythm)
-  }, [user])
+    return () => { active = false; window.removeEventListener(RHYTHM_UPDATED_EVENT, refreshRhythm) }
+  }, [subjects, user])
 
   const handleRepair = async (incident: SuspiciousStudyDay, minutes: number) => {
     await repairStudyIncident(user, incident, minutes)

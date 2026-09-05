@@ -56,9 +56,9 @@ export type SharedWorkspaceMember = {
   createdAt: string
 }
 
-const STORAGE_KEY = 'study_timer_planner_v1'
-const SHARED_STORAGE_KEY = 'study_timer_shared_planner_v1'
 const emptyPlannerData = (): PlannerData => ({ tasks: [], events: [] })
+const plannerMemory = new Map<string, PlannerData>()
+const sharedPlannerMemory = new Map<string, PlannerData>()
 
 function activeEvents(events: PlannerEvent[]) {
   const today = new Date()
@@ -66,13 +66,7 @@ function activeEvents(events: PlannerEvent[]) {
   return events.filter((event) => typeof event?.eventDate === 'string' && event.eventDate >= todayKey)
 }
 
-function scopedStorageKey(scope?: User | null) {
-  return scope?.id ? `${STORAGE_KEY}_${scope.id}` : STORAGE_KEY
-}
-
-function sharedStorageKey(workspaceId: string) {
-  return `${SHARED_STORAGE_KEY}_${workspaceId}`
-}
+function scopedStorageKey(scope?: User | null) { return scope?.id ?? 'guest' }
 
 function personalPlannerData(data: PlannerData): PlannerData {
   return {
@@ -88,30 +82,11 @@ export function createPlannerId() {
 }
 
 export function loadLocalPlannerData(scope?: User | null): PlannerData {
-  if (typeof window === 'undefined') return emptyPlannerData()
-  try {
-    const raw = localStorage.getItem(scopedStorageKey(scope))
-    if (!raw) return emptyPlannerData()
-    const parsed = JSON.parse(raw)
-    const data = {
-      tasks: Array.isArray(parsed.tasks) ? parsed.tasks.filter((task: Partial<PlannerTask> | null) => !task?.sourceWorkspaceId) : [],
-      events: Array.isArray(parsed.events) ? parsed.events.filter((event: Partial<PlannerEvent> | null) => !event?.sourceWorkspaceId) : [],
-    }
-    data.events = activeEvents(data.events)
-    localStorage.setItem(scopedStorageKey(scope), JSON.stringify(data))
-    return data
-  } catch {
-    return emptyPlannerData()
-  }
+  return plannerMemory.get(scopedStorageKey(scope)) ?? emptyPlannerData()
 }
 
 export function saveLocalPlannerData(data: PlannerData, scope?: User | null) {
-  if (typeof window === 'undefined') return
-  try {
-    localStorage.setItem(scopedStorageKey(scope), JSON.stringify(personalPlannerData(data)))
-  } catch (error) {
-    console.error('Failed to save planner data:', error)
-  }
+  plannerMemory.set(scopedStorageKey(scope), personalPlannerData(data))
 }
 
 function normalizePlannerRows(tasks: unknown, events: unknown): PlannerData {
@@ -122,30 +97,11 @@ function normalizePlannerRows(tasks: unknown, events: unknown): PlannerData {
 }
 
 export function loadLocalSharedPlannerData(workspaceId: string): PlannerData {
-  if (typeof window === 'undefined') return emptyPlannerData()
-  try {
-    const raw = localStorage.getItem(sharedStorageKey(workspaceId))
-    if (!raw) return emptyPlannerData()
-    const parsed = JSON.parse(raw)
-    const data = normalizePlannerRows(parsed.tasks, parsed.events)
-    localStorage.setItem(sharedStorageKey(workspaceId), JSON.stringify(data))
-    return data
-  } catch {
-    return emptyPlannerData()
-  }
+  return sharedPlannerMemory.get(workspaceId) ?? emptyPlannerData()
 }
 
 export function saveLocalSharedPlannerData(workspaceId: string, data: PlannerData) {
-  if (typeof window === 'undefined') return
-  try {
-    localStorage.setItem(sharedStorageKey(workspaceId), JSON.stringify(normalizePlannerRows(data.tasks, data.events)))
-  } catch (error) {
-    console.error('Failed to save shared planner data:', error)
-  }
-}
-
-function mergeById<T extends { id: string }>(cloud: T[], local: T[]) {
-  return Array.from(new Map([...cloud, ...local].map((item) => [item.id, item])).values())
+  sharedPlannerMemory.set(workspaceId, normalizePlannerRows(data.tasks, data.events))
 }
 
 async function upsertPlannerTasksWithSubjectFallback(rows: Array<Record<string, unknown>>) {
@@ -158,6 +114,78 @@ async function upsertPlannerTasksWithSubjectFallback(rows: Array<Record<string, 
     return
   }
   if (error) throw error
+}
+
+function plannerTaskRow(task: PlannerTask, userId: string, workspaceId?: string) {
+  return {
+    id: task.id,
+    user_id: userId,
+    ...(workspaceId ? { workspace_id: workspaceId } : {}),
+    title: task.title,
+    subject: task.subject,
+    subject_id: task.subjectId ?? null,
+    normalized_title: task.normalizedTitle ?? null,
+    subject_key: task.subjectKey ?? null,
+    deadline_confidence: task.deadlineConfidence ?? null,
+    due_date: task.dueDate || null,
+    estimated_minutes: task.estimatedMinutes,
+    priority: task.priority,
+    completed: task.completed,
+    created_at: task.createdAt,
+  }
+}
+
+function plannerEventRow(event: PlannerEvent, userId: string, workspaceId?: string) {
+  return {
+    id: event.id,
+    user_id: userId,
+    ...(workspaceId ? { workspace_id: workspaceId } : {}),
+    title: event.title,
+    event_date: event.eventDate,
+    type: event.type,
+    notes: event.notes,
+    created_at: event.createdAt,
+  }
+}
+
+/** Write exactly one changed personal record. Avoiding a full-list upsert
+ * prevents a stale browser tab from reviving unrelated LINE or team updates. */
+export async function syncPlannerTask(user: User | null, task: PlannerTask) {
+  if (!user || task.sourceWorkspaceId) return
+  try {
+    await upsertPlannerTasksWithSubjectFallback([plannerTaskRow(task, user.id)])
+  } catch (error) {
+    console.error('Failed to sync planner task:', error)
+  }
+}
+
+export async function syncPlannerEvent(user: User | null, event: PlannerEvent) {
+  if (!user || event.sourceWorkspaceId) return
+  try {
+    const { error } = await supabase.from('planner_events').upsert(plannerEventRow(event, user.id))
+    if (error) throw error
+  } catch (error) {
+    console.error('Failed to sync planner event:', error)
+  }
+}
+
+export async function syncSharedPlannerTask(user: User | null, workspaceId: string, task: PlannerTask) {
+  if (!user) return
+  try {
+    await upsertPlannerTasksWithSubjectFallback([plannerTaskRow(task, user.id, workspaceId)])
+  } catch (error) {
+    console.error('Failed to sync shared planner task:', error)
+  }
+}
+
+export async function syncSharedPlannerEvent(user: User | null, workspaceId: string, event: PlannerEvent) {
+  if (!user) return
+  try {
+    const { error } = await supabase.from('planner_events').upsert(plannerEventRow(event, user.id, workspaceId))
+    if (error) throw error
+  } catch (error) {
+    console.error('Failed to sync shared planner event:', error)
+  }
 }
 
 export async function loadPlannerData(user: User | null): Promise<PlannerData> {
@@ -202,12 +230,8 @@ export async function loadPlannerData(user: User | null): Promise<PlannerData> {
     // The previous order let a stale local cache overwrite a newer server
     // value (for example, completing a task from the LINE bot), so the web
     // page would resurrect the task as incomplete on its next load.
-    const merged: PlannerData = {
-      tasks: mergeById(local.tasks, cloud.tasks),
-      events: mergeById(local.events, cloud.events),
-    }
-    saveLocalPlannerData(merged, user)
-    return merged
+    saveLocalPlannerData(cloud, user)
+    return cloud
   } catch (error) {
     console.error('Failed to load planner data:', error)
     return local
@@ -390,12 +414,8 @@ export async function loadSharedPlannerData(user: User | null, workspaceId: stri
         id: row.id, title: row.title, eventDate: row.event_date, type: row.type, notes: row.notes ?? '', createdAt: row.created_at,
       })),
     )
-    const merged: PlannerData = {
-      tasks: mergeById(local.tasks, cloud.tasks),
-      events: mergeById(local.events, cloud.events),
-    }
-    saveLocalSharedPlannerData(workspaceId, merged)
-    return merged
+    saveLocalSharedPlannerData(workspaceId, cloud)
+    return cloud
   } catch (error) {
     console.error('Failed to load shared planner data:', error)
     return local
@@ -406,15 +426,8 @@ export async function syncSharedPlannerData(user: User | null, workspaceId: stri
   if (!user) return
   try {
     await Promise.all([
-      upsertPlannerTasksWithSubjectFallback(data.tasks.map((task) => ({
-        id: task.id, user_id: user.id, workspace_id: workspaceId, title: task.title, subject: task.subject, subject_id: task.subjectId ?? null, normalized_title: task.normalizedTitle ?? null, subject_key: task.subjectKey ?? null, deadline_confidence: task.deadlineConfidence ?? null,
-        due_date: task.dueDate || null, estimated_minutes: task.estimatedMinutes, priority: task.priority,
-        completed: task.completed, created_at: task.createdAt,
-      }))),
-      data.events.length ? supabase.from('planner_events').upsert(data.events.map((event) => ({
-        id: event.id, user_id: user.id, workspace_id: workspaceId, title: event.title, event_date: event.eventDate,
-        type: event.type, notes: event.notes, created_at: event.createdAt,
-      }))) : Promise.resolve(),
+      upsertPlannerTasksWithSubjectFallback(data.tasks.map((task) => plannerTaskRow(task, user.id, workspaceId))),
+      data.events.length ? supabase.from('planner_events').upsert(data.events.map((event) => plannerEventRow(event, user.id, workspaceId))) : Promise.resolve(),
     ])
   } catch (error) {
     console.error('Failed to sync shared planner data:', error)
@@ -436,13 +449,8 @@ export async function syncPlannerData(user: User | null, data: PlannerData) {
     const personalTasks = data.tasks.filter((task) => !task.sourceWorkspaceId)
     const personalEvents = data.events.filter((event) => !event.sourceWorkspaceId)
     await Promise.all([
-      upsertPlannerTasksWithSubjectFallback(personalTasks.map((task) => ({
-        id: task.id, user_id: user.id, title: task.title, subject: task.subject, subject_id: task.subjectId ?? null, normalized_title: task.normalizedTitle ?? null, subject_key: task.subjectKey ?? null, deadline_confidence: task.deadlineConfidence ?? null, due_date: task.dueDate || null,
-        estimated_minutes: task.estimatedMinutes, priority: task.priority, completed: task.completed, created_at: task.createdAt,
-      }))),
-      personalEvents.length ? supabase.from('planner_events').upsert(personalEvents.map((event) => ({
-        id: event.id, user_id: user.id, title: event.title, event_date: event.eventDate, type: event.type, notes: event.notes, created_at: event.createdAt,
-      }))) : Promise.resolve(),
+      upsertPlannerTasksWithSubjectFallback(personalTasks.map((task) => plannerTaskRow(task, user.id))),
+      personalEvents.length ? supabase.from('planner_events').upsert(personalEvents.map((event) => plannerEventRow(event, user.id))) : Promise.resolve(),
     ])
   } catch (error) {
     console.error('Failed to sync planner data:', error)

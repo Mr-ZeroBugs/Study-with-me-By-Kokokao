@@ -3,7 +3,6 @@ import { loadOntologySnapshot, runOntologyAction } from './ontology-client'
 import type { KokoRhythmPlan, RhythmSubject } from './rhythm-storage'
 
 type Row = Record<string, unknown>
-const migrationKey = (userId: string) => `koko_rhythm_ontology_v1_${userId}`
 const string = (value: unknown) => typeof value === 'string' ? value : ''
 
 /**
@@ -12,7 +11,7 @@ const string = (value: unknown) => typeof value === 'string' ? value : ''
  * It returns the same plan rewritten with canonical Ontology UUIDs, so the UI
  * no longer depends on names once a learner has signed in.
  */
-export async function syncRhythmPlanToOntology(user: User, plan: KokoRhythmPlan): Promise<KokoRhythmPlan> {
+export async function syncRhythmPlanToOntology(_user: User, plan: KokoRhythmPlan): Promise<KokoRhythmPlan> {
   const snapshot = await loadOntologySnapshot()
   const subjectRows = [...snapshot.subjects] as Row[]
   const subjectByName = new Map<string, string>(subjectRows
@@ -99,7 +98,6 @@ export async function syncRhythmPlanToOntology(user: User, plan: KokoRhythmPlan)
     minorGroupId: canonicalGroupIdByLocalId.get(plan.minorGroupId) ?? '',
     maintenance: canonicalMaintenance,
   }
-  if (typeof window !== 'undefined') window.localStorage.setItem(migrationKey(user.id), 'complete')
   return canonicalPlan
 }
 
@@ -138,8 +136,4 @@ export async function loadRhythmPlanFromOntology(fallback: KokoRhythmPlan): Prom
       : []
   })
   return { ...fallback, groups: planGroups, majorGroupId, minorGroupId, maintenance, updatedAt: new Date().toISOString() }
-}
-
-export function hasMigratedRhythmPlan(user: User | null) {
-  return Boolean(user && typeof window !== 'undefined' && window.localStorage.getItem(migrationKey(user.id)) === 'complete')
 }

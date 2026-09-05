@@ -12,7 +12,7 @@ import {
   loadKokoRhythmPlan, saveKokoRhythmPlan,
   type KokoRhythmPlan, type RhythmMaintenance,
 } from '../lib/rhythm-storage'
-import { hasMigratedRhythmPlan, loadRhythmPlanFromOntology, syncRhythmPlanToOntology } from '../lib/rhythm-ontology'
+import { loadRhythmPlanFromOntology, syncRhythmPlanToOntology } from '../lib/rhythm-ontology'
 import { runOntologyAction } from '../lib/ontology-client'
 import { getLocalSubjects, saveLocalSubjects } from '../lib/storage'
 
@@ -31,100 +31,87 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
   const [maintenanceMinutes,    setMaintenanceMinutes]    = useState<5|10|15|20>(10)
   const [activePanel,           setActivePanel]           = useState<RhythmPanel|null>(null)
   const loadedUserRef   = useRef<string|null|undefined>(undefined)
-  const saveTimeoutRef  = useRef<number|null>(null)
   const pendingSaveRef  = useRef<{plan:KokoRhythmPlan;user:User|null}|null>(null)
-  const cloudSyncTimeoutRef = useRef<number|null>(null)
+  const cloudSaveInFlightRef = useRef(false)
   const syncRevisionRef = useRef(0)
+  const hydrationRevisionRef = useRef(0)
+  const hydratedUserIdRef = useRef<string | null>(null)
+
+  const flushPlanSave = useCallback(() => {
+    const pending = pendingSaveRef.current
+    if (cloudSaveInFlightRef.current || !pending?.user || hydratedUserIdRef.current !== pending.user.id) return
+    const revision = syncRevisionRef.current
+    const savingUser = pending.user
+    const planToSave = pending.plan
+    pendingSaveRef.current = null
+    cloudSaveInFlightRef.current = true
+    // Start the write immediately. A debounced write made a newly created
+    // group disappear when a learner refreshed or switched pages too fast.
+    void syncRhythmPlanToOntology(savingUser, planToSave).then((canonicalPlan) => {
+      if (revision !== syncRevisionRef.current || hydratedUserIdRef.current !== savingUser.id) return
+      setPlan(canonicalPlan)
+      saveKokoRhythmPlan(savingUser, canonicalPlan)
+    }).catch((error) => {
+      console.error('Koko Rhythm cloud save failed:', error)
+    }).finally(() => {
+      cloudSaveInFlightRef.current = false
+      flushPlanSave()
+    })
+  }, [])
 
   const queuePlanSave = useCallback((next: KokoRhythmPlan) => {
-    // Local-first is the durability contract: closing, refreshing, or losing
-    // the network immediately after an edit must never lose a group.
     saveKokoRhythmPlan(user, next)
-    const revision = ++syncRevisionRef.current
-    if (saveTimeoutRef.current) window.clearTimeout(saveTimeoutRef.current)
+    syncRevisionRef.current += 1
     pendingSaveRef.current = { plan: next, user }
-    saveTimeoutRef.current = window.setTimeout(() => {
-      const p = pendingSaveRef.current
-      if (p?.user) {
-        if (cloudSyncTimeoutRef.current) window.clearTimeout(cloudSyncTimeoutRef.current)
-        cloudSyncTimeoutRef.current = window.setTimeout(() => {
-          void syncRhythmPlanToOntology(p.user!, p.plan).then((canonicalPlan) => {
-            if (revision !== syncRevisionRef.current) return
-            setPlan(canonicalPlan)
-            saveKokoRhythmPlan(p.user!, canonicalPlan)
-          }).catch((error) => {
-            // Ontology is optional until the migration is applied. The local
-            // plan remains intact and will retry on the next meaningful save.
-            console.info('Koko Rhythm is still using its local fallback:', error)
-          })
-        }, 500)
-      }
-      pendingSaveRef.current = null; saveTimeoutRef.current = null
-    }, 220)
-  }, [user])
-
-  useEffect(() => () => {
-    if (saveTimeoutRef.current) window.clearTimeout(saveTimeoutRef.current)
-    if (cloudSyncTimeoutRef.current) window.clearTimeout(cloudSyncTimeoutRef.current)
-    const p = pendingSaveRef.current
-    if (p) saveKokoRhythmPlan(p.user, p.plan)
-  }, [])
+    flushPlanSave()
+  }, [flushPlanSave, user])
 
   useEffect(() => {
     const key = user?.id ?? null
     if (loadedUserRef.current === key) return
     loadedUserRef.current = key
     syncRevisionRef.current = 0
+    hydratedUserIdRef.current = null
+    const hydrationRevision = ++hydrationRevisionRef.current
     pendingSaveRef.current = null
-    if (saveTimeoutRef.current) window.clearTimeout(saveTimeoutRef.current)
-    if (cloudSyncTimeoutRef.current) window.clearTimeout(cloudSyncTimeoutRef.current)
-    saveTimeoutRef.current = null
-    cloudSyncTimeoutRef.current = null
     const saved = loadKokoRhythmPlan(user)
     const localPlan = saved ?? createDefaultKokoRhythmPlan(subjects)
     setPlan(localPlan)
-    setReady(true)
+    setReady(false)
     if (!saved) saveKokoRhythmPlan(user, localPlan)
     if (!user) {
+      hydratedUserIdRef.current = null
+      setReady(true)
       return
     }
 
     void (async () => {
       try {
-        // Existing local data is already the last plan this device showed the
-        // learner. Do not rewrite the whole Ontology graph merely by opening
-        // this screen; meaningful edits are synced by queuePlanSave instead.
-        if (saved) return
         const cloudPlan = await loadRhythmPlanFromOntology(localPlan)
+        if (hydrationRevision !== hydrationRevisionRef.current) return
         const next = cloudPlan ?? localPlan
-        if (syncRevisionRef.current !== 0) return
         setPlan(next)
         saveKokoRhythmPlan(user, next)
-        if (!cloudPlan && !hasMigratedRhythmPlan(user)) {
+        if (!cloudPlan) {
           const canonicalPlan = await syncRhythmPlanToOntology(user, next)
-          if (syncRevisionRef.current !== 0) return
+          if (hydrationRevision !== hydrationRevisionRef.current) return
           setPlan(canonicalPlan)
           saveKokoRhythmPlan(user, canonicalPlan)
         }
+        if (hydrationRevision !== hydrationRevisionRef.current) return
+        hydratedUserIdRef.current = user.id
+        setReady(true)
       } catch (error) {
         // The migration may not have been applied yet. Keep every existing
         // rhythm usable locally rather than blocking the learner's planner.
         console.info('Koko Rhythm cloud read is waiting for Ontology:', error)
+        if (hydrationRevision === hydrationRevisionRef.current) {
+          hydratedUserIdRef.current = user.id
+          setReady(true)
+        }
       }
     })()
   }, [subjects, user])
-
-  useEffect(() => {
-    if (!ready) return
-    const known = new Set(plan.groups.flatMap(g => g.subjects.map(subject => subject.name)))
-    const missing = subjects.filter(s => !known.has(s))
-    if (!missing.length) return
-    setPlan(cur => {
-      const first = cur.groups[0]; if (!first) return cur
-      const next = { ...cur, updatedAt: new Date().toISOString(), groups: cur.groups.map((g, i) => i === 0 ? { ...g, subjects: [...g.subjects, ...missing.map(createLocalRhythmSubject)] } : g) }
-      queuePlanSave(next); return next
-    })
-  }, [plan.groups, queuePlanSave, ready, subjects])
 
   const updatePlan = (updater: (c: KokoRhythmPlan) => KokoRhythmPlan) => {
     setPlan(cur => { const next = { ...updater(cur), updatedAt: new Date().toISOString() }; queuePlanSave(next); return next })
@@ -178,7 +165,7 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
   }
   const toggleSubject = (groupId: string, subject: string) => {
     updatePlan(cur => ({ ...cur, groups: cur.groups.map(g => {
-      if (g.id === groupId) return { ...g, subjects: g.subjects.some(item => item.name === subject) ? g.subjects.filter(item => item.name !== subject) : [...g.subjects, plan.groups.flatMap(item => item.subjects).find(item => item.name === subject) ?? createLocalRhythmSubject(subject)] }
+      if (g.id === groupId) return { ...g, subjects: g.subjects.some(item => item.name === subject) ? g.subjects.filter(item => item.name !== subject) : [...g.subjects, cur.groups.flatMap(item => item.subjects).find(item => item.name === subject) ?? createLocalRhythmSubject(subject)] }
       return { ...g, subjects: g.subjects.filter(item => item.name !== subject) }
     }) }))
   }
@@ -202,7 +189,7 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
 
   if (!ready) return <main className="rh-page"><p className="planner-loading">opening your rhythm…</p></main>
 
-  const panelTitle = activePanel === 'groups' ? 'Build your constellations' : activePanel === 'anchors' ? 'Place your energy' : 'Keep paths gently alive'
+  const panelTitle = activePanel === 'groups' ? 'Organize your subjects' : activePanel === 'anchors' ? 'Choose where your energy goes' : 'Keep a subject warm'
 
   return (
     <main className="rh-page">
@@ -213,7 +200,7 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
           <div>
             <p className="eyebrow">energy-led planning system</p>
             <h1 className="rh-heading">Koko Rhythm<span>°</span></h1>
-            <p className="rh-subhead">One direction. A few anchors. The rest follows.</p>
+            <p className="rh-subhead">Choose one main focus, one secondary focus, and keep the rest warm.</p>
           </div>
           <div className="rh-header-actions">
             <span><Sparkles className="size-3.5" />your rhythm</span>
@@ -227,42 +214,42 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
           {/* Major Anchor */}
           <button type="button" className="rh-card rh-card--major" onClick={() => setActivePanel('anchors')}>
             <div className="rh-card-top">
-              <p className="rh-eyebrow">major anchor</p>
+              <p className="rh-eyebrow">main focus</p>
               <span className="rh-icon rh-icon--major"><Sparkles className="size-4" /></span>
             </div>
-            <p className="rh-card-title">{majorGroup?.name || 'choose major'}</p>
-            <p className="rh-card-meta">deep energy · {majorGroup?.subjects.length ?? 0} subjects</p>
+            <p className="rh-card-title">{majorGroup?.name || 'choose main focus'}</p>
+            <p className="rh-card-meta">most of your energy · {majorGroup?.subjects.length ?? 0} subjects</p>
             {majorGroup?.subjects && majorGroup.subjects.length > 0 && (
               <div className="rh-subject-chips">
                 {majorGroup.subjects.slice(0, 3).map(subject => <span key={subject.id}>{subject.name}</span>)}
                 {majorGroup.subjects.length > 3 && <span>+{majorGroup.subjects.length - 3}</span>}
               </div>
             )}
-            <span className="rh-card-cta">set anchor <ArrowUpRight className="size-3" /></span>
+            <span className="rh-card-cta">choose focus <ArrowUpRight className="size-3" /></span>
           </button>
 
           {/* Minor Anchor */}
           <button type="button" className="rh-card rh-card--minor" onClick={() => setActivePanel('anchors')}>
             <div className="rh-card-top">
-              <p className="rh-eyebrow">minor anchor</p>
+              <p className="rh-eyebrow">secondary focus</p>
               <span className="rh-icon rh-icon--minor"><Leaf className="size-4" /></span>
             </div>
-            <p className="rh-card-title">{minorGroup?.name || 'choose minor'}</p>
-            <p className="rh-card-meta">steady energy · {minorGroup?.subjects.length ?? 0} subjects</p>
+            <p className="rh-card-title">{minorGroup?.name || 'choose secondary focus'}</p>
+            <p className="rh-card-meta">steady progress · {minorGroup?.subjects.length ?? 0} subjects</p>
             {minorGroup?.subjects && minorGroup.subjects.length > 0 && (
               <div className="rh-subject-chips">
                 {minorGroup.subjects.slice(0, 3).map(subject => <span key={subject.id}>{subject.name}</span>)}
                 {minorGroup.subjects.length > 3 && <span>+{minorGroup.subjects.length - 3}</span>}
               </div>
             )}
-            <span className="rh-card-cta">set anchor <ArrowUpRight className="size-3" /></span>
+            <span className="rh-card-cta">choose focus <ArrowUpRight className="size-3" /></span>
           </button>
         </div>
 
         {/* ── Row 2: Focus Groups ─────────────────────────────────── */}
         <div className="rh-section-head">
           <div>
-            <p className="rh-eyebrow">focus constellations</p>
+            <p className="rh-eyebrow">subject groups</p>
             <h2 className="rh-section-title">your {plan.groups.length} groups</h2>
           </div>
           <button type="button" className="rh-add-btn" onClick={() => setActivePanel('groups')}>
@@ -298,8 +285,8 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
         {/* ── Row 3: Maintenance ──────────────────────────────────── */}
         <div className="rh-section-head">
           <div>
-            <p className="rh-eyebrow">maintenance paths</p>
-            <h2 className="rh-section-title">keep warm, stay light</h2>
+            <p className="rh-eyebrow">keep warm</p>
+            <h2 className="rh-section-title">small practice, no extra pressure</h2>
           </div>
           <button type="button" className="rh-add-btn" onClick={() => setActivePanel('maintenance')}>
             <Plus className="size-3.5" />add path
@@ -328,7 +315,7 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
 
         {/* Footer */}
         <footer className="rh-footer">
-          <span><Sparkles className="size-3.5" />Your rhythm is a map, never a score.</span>
+          <span><Sparkles className="size-3.5" />Your Rhythm guides attention. It never grades you.</span>
           <div>
             <i className="major" />major
             <i className="minor" />minor
@@ -396,10 +383,10 @@ export function RhythmHub({ user, subjects }: RhythmHubProps) {
 
               {activePanel === 'anchors' && (
                 <section className="rhythm-editor-anchors">
-                  <p>Two durable goals only. Changing one does not erase a group—it redirects your energy when your direction truly changes.</p>
-                  <label className="major"><span><Sparkles className="size-5" /><b>Major</b><small>the direction receiving your deepest energy</small></span><select autoFocus value={plan.majorGroupId} onChange={e => setAnchor('major', e.target.value)}><option value="">choose major</option>{plan.groups.map(g => <option value={g.id} key={g.id}>{g.name}</option>)}</select></label>
+                  <p>Keep these two goals for weeks or months. Change them only when your real direction changes.</p>
+                  <label className="major"><span><Sparkles className="size-5" /><b>Main focus</b><small>where most of your study energy goes</small></span><select autoFocus value={plan.majorGroupId} onChange={e => setAnchor('major', e.target.value)}><option value="">choose main focus</option>{plan.groups.map(g => <option value={g.id} key={g.id}>{g.name}</option>)}</select></label>
                   <div className="rhythm-editor-flow"><span />energy flows through today<span /></div>
-                  <label className="minor"><span><Leaf className="size-5" /><b>Minor</b><small>the direction that still deserves one step</small></span><select value={plan.minorGroupId} onChange={e => setAnchor('minor', e.target.value)}><option value="">choose minor</option>{plan.groups.filter(g => g.id !== plan.majorGroupId).map(g => <option value={g.id} key={g.id}>{g.name}</option>)}</select></label>
+                  <label className="minor"><span><Leaf className="size-5" /><b>Secondary focus</b><small>the other direction you want to move forward</small></span><select value={plan.minorGroupId} onChange={e => setAnchor('minor', e.target.value)}><option value="">choose secondary focus</option>{plan.groups.filter(g => g.id !== plan.majorGroupId).map(g => <option value={g.id} key={g.id}>{g.name}</option>)}</select></label>
                 </section>
               )}
 

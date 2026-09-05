@@ -34,6 +34,7 @@ import {
   getLocalSubjects,
   MAX_CONTINUOUS_FOCUS_SECONDS,
   recordStudyInterval,
+  loadStudyRounds,
   recordFocusMinutesByTimeline,
   saveLocalSubjects,
   saveLocalRounds,
@@ -41,9 +42,10 @@ import {
 } from '../lib/storage'
 import { AuthModal } from '../components/auth-modal'
 import { DashboardPage } from '../components/dashboard-page'
-import { getIntensityThreshold } from '../lib/theme'
-import { ensureOntologySubject } from '../lib/ontology-client'
+import { INTENSITY_UPDATED_EVENT, getIntensityThreshold, loadIntensityThreshold } from '../lib/theme'
+import { ensureOntologySubject, loadOntologySnapshot } from '../lib/ontology-client'
 import { takePendingFocusSubject } from '../lib/next-best-action'
+import { loadAccountState, removeAccountState, saveAccountState } from '../lib/account-state'
 
 const modes = {
   focus: { label: 'Focus time', minutes: 25, color: 'mint' },
@@ -55,14 +57,14 @@ type Mode = keyof typeof modes
 type TimerMode = 'flow' | 'countdown'
 type Extension = 'pomodoro' | 'rule5217' | null
 
-const TIMER_SESSION_KEY = 'study_timer_session_v1'
+const TIMER_SESSION_NAMESPACE = 'timer_session'
 const POMODORO_LENGTH_OPTIONS = [15, 25, 30, 45, 50, 60]
 const POMODORO_REMINDER_OPTIONS = [15, 20, 25, 30, 45, 50, 60]
 const RULE_5217_FOCUS_MINUTES = 52
 const LONG_FOCUS_WARNING_SECONDS = 150 * 60
 const FOCUS_CONFIRM_SECONDS = 180 * 60
 const FOCUS_CONFIRM_GRACE_SECONDS = 2 * 60
-const TIMER_RECOVERY_KEY = 'study_timer_recovery_v1'
+const TIMER_RECOVERY_NAMESPACE = 'timer_recovery'
 
 function countdownLengthFor(mode: Mode, extension: Extension, pomodoroMinutes: number) {
   if (extension === 'rule5217') return RULE_5217_FOCUS_MINUTES
@@ -94,10 +96,9 @@ type PersistedTimerSession = {
 
 type TimerRecovery = { dateKey: string; subject: string; recordedMinutes: number; suggestedMinutes: number }
 
-function readPersistedTimerSession(): PersistedTimerSession | null {
-  if (typeof window === 'undefined') return null
+function normalizePersistedTimerSession(value: unknown): PersistedTimerSession | null {
   try {
-    const parsed = JSON.parse(localStorage.getItem(TIMER_SESSION_KEY) ?? 'null') as Partial<PersistedTimerSession> | null
+    const parsed = value as Partial<PersistedTimerSession> | null
     if (!parsed || parsed.version !== 1 || typeof parsed.savedAt !== 'number') return null
     if (parsed.timerMode !== 'flow' && parsed.timerMode !== 'countdown') return null
     if (parsed.mode !== 'focus' && parsed.mode !== 'short' && parsed.mode !== 'long') return null
@@ -125,11 +126,12 @@ function readPersistedTimerSession(): PersistedTimerSession | null {
   }
 }
 
-function savePersistedTimerSession(session: Omit<PersistedTimerSession, 'version' | 'savedAt'>) {
-  if (typeof window === 'undefined') return
-  try {
-    localStorage.setItem(TIMER_SESSION_KEY, JSON.stringify({ ...session, version: 1, savedAt: Date.now() }))
-  } catch {}
+function savePersistedTimerSession(user: User | null, session: Omit<PersistedTimerSession, 'version' | 'savedAt'>) {
+  void saveAccountState(user, TIMER_SESSION_NAMESPACE, { ...session, version: 1, savedAt: Date.now() })
+    // A timer must stay usable when a network request briefly fails. The
+    // in-memory snapshot remains available in this tab; account-state errors
+    // are handled once at the persistence layer instead of spamming the UI.
+    .catch(() => {})
 }
 
 const tips = [
@@ -221,7 +223,6 @@ function TimerPage() {
   // Auth resolves after the focus UI mounts. Keep track of which subject
   // namespace we are showing so a subject added during that short gap is not
   // overwritten when the signed-in namespace finishes loading.
-  const subjectScopeRef = useRef<string | null | undefined>(undefined)
   const ontologySubjectIdsRef = useRef<Record<string, string>>({})
 
   useEffect(() => {
@@ -266,7 +267,7 @@ function TimerPage() {
   const persistCurrentTimer = useCallback(() => {
     if (!timerRestoredRef.current) return
     const current = timerOptionsRef.current
-    savePersistedTimerSession({
+    savePersistedTimerSession(current.user, {
       running: current.running,
       timerMode: current.timerMode,
       mode: current.mode,
@@ -303,7 +304,10 @@ function TimerPage() {
     const endedAt = Date.now()
     const durationSeconds = Math.max(0, Math.floor((endedAt - activeInterval.startedAt) / 1000))
     if (durationSeconds < 5) return
-    const intervalUser = timerOptionsRef.current.user ?? activeInterval.user
+    // The interval belongs to the account that started it. If auth changes
+    // while the timer is winding down, never attribute old focus to the newly
+    // signed-in account.
+    const intervalUser = activeInterval.user
     void resolveSubjectId(activeInterval.subject, intervalUser).then((subjectId) => recordStudyInterval(intervalUser, {
       id: createStudyIntervalId(),
       startedAt: new Date(activeInterval.startedAt).toISOString(),
@@ -331,37 +335,31 @@ function TimerPage() {
 
     const loadData = async (currentUser: User | null) => {
       const currentRequestId = ++requestId
-      const nextLogs = await loadStudyLogs(currentUser)
+      const [nextLogs, ontologySubjectNames] = await Promise.all([
+        loadStudyLogs(currentUser),
+        currentUser
+          ? loadOntologySnapshot().then((snapshot) => snapshot.subjects.flatMap((subject) => typeof subject.name === 'string' ? [subject.name] : [])).catch(() => [])
+          : Promise.resolve([] as string[]),
+      ])
       if (currentRequestId !== requestId) return
       setLogs(nextLogs)
-      setSubjects((previous) => Array.from(new Set([...previous, ...getLocalSubjects(currentUser)])))
+      setSubjects((previous) => Array.from(new Set([...previous, ...getLocalSubjects(currentUser), ...ontologySubjectNames])))
     }
 
     // Listen for intensity threshold changes from Settings modal
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === 'study_intensity_threshold' && e.newValue) {
-        const val = parseInt(e.newValue, 10)
-        if (Number.isFinite(val) && val >= 15) setHighThreshold(val)
-      }
+    const onIntensity = (e: Event) => {
+      const val = (e as CustomEvent<number>).detail
+      if (Number.isFinite(val) && val >= 15) setHighThreshold(val)
     }
-    window.addEventListener('storage', onStorage)
+    window.addEventListener(INTENSITY_UPDATED_EVENT, onIntensity)
 
     const applyUserSession = async (currentUser: User | null) => {
-      const nextScope = currentUser?.id ?? null
-      const shouldCarryGuestSubjects = Boolean(currentUser) && (subjectScopeRef.current === undefined || subjectScopeRef.current === null)
-      subjectScopeRef.current = nextScope
       setUser(currentUser)
+      void loadIntensityThreshold(currentUser).then(setHighThreshold).catch(() => {})
       setLogs({})
       setSessions(getLocalRounds(key, currentUser))
-      setSubjects((previous) => {
-        const stored = getLocalSubjects(currentUser)
-        const guestSubjects = shouldCarryGuestSubjects ? getLocalSubjects(null) : []
-        const nextSubjects = shouldCarryGuestSubjects ? Array.from(new Set([...stored, ...guestSubjects, ...previous])) : stored
-        // If a learner added a subject while the auth session was still
-        // hydrating, promote that in-memory/guest addition into their account.
-        if (shouldCarryGuestSubjects) saveLocalSubjects(nextSubjects, currentUser)
-        return nextSubjects
-      })
+      void loadStudyRounds(currentUser, key).then(setSessions).catch(() => {})
+      setSubjects(getLocalSubjects(currentUser))
       await loadData(currentUser)
     }
 
@@ -377,21 +375,29 @@ function TimerPage() {
     return () => {
       requestId += 1
       authListener.subscription.unsubscribe()
-      window.removeEventListener('storage', onStorage)
+      window.removeEventListener(INTENSITY_UPDATED_EVENT, onIntensity)
     }
   }, [])
 
   // Restore the timer after route navigation or a refresh. The server still
   // renders stable zero/default values; browser-only state is applied after mount.
   useEffect(() => {
-    try {
-      const recovery = JSON.parse(localStorage.getItem(TIMER_RECOVERY_KEY) ?? 'null') as TimerRecovery | null
+    let active = true
+    timerRestoredRef.current = false
+    setTimerRestored(false)
+    setRunning(false)
+    setElapsedSeconds(0)
+    setTimerRecovery(null)
+    void Promise.all([
+      loadAccountState<TimerRecovery | null>(user, TIMER_RECOVERY_NAMESPACE, null),
+      loadAccountState<PersistedTimerSession | null>(user, TIMER_SESSION_NAMESPACE, null),
+    ]).then(([recovery, rawPersisted]) => {
+      if (!active) return
       if (recovery?.dateKey && Number.isFinite(recovery.recordedMinutes)) {
         setTimerRecovery(recovery)
         setRecoveryMinutes(recovery.suggestedMinutes)
       }
-    } catch {}
-    const persisted = readPersistedTimerSession()
+    const persisted = normalizePersistedTimerSession(rawPersisted)
     if (persisted) {
       const now = Date.now()
       const secondsSinceSave = persisted.running ? Math.max(0, Math.floor((now - persisted.savedAt) / 1000)) : 0
@@ -423,10 +429,19 @@ function TimerPage() {
         restoredLastMinuteSyncRef.current = persisted.elapsedSeconds
       }
       setRunning(shouldResume)
+    } else {
+      setSelectedSubject('General')
+      setSeconds(countdownLengthFor('focus', null, 25) * 60)
     }
     timerRestoredRef.current = true
     setTimerRestored(true)
-  }, [])
+    }).catch((error) => {
+      console.error('Failed to restore timer state:', error)
+      timerRestoredRef.current = true
+      setTimerRestored(true)
+    })
+    return () => { active = false }
+  }, [user])
 
   // 2. Complete Focus Session Handler
   const handleFocusCompleted = useCallback(
@@ -498,7 +513,7 @@ function TimerPage() {
           const fromElapsed = lastMinuteSyncRef.current
           lastMinuteSyncRef.current = currentElapsed
           // Attribute each minute to the local calendar day where it happened.
-          recordFocusMinutesByTimeline(currentOptions.user, activeInterval.startedAt, fromElapsed, currentElapsed, 'flow', 'flow', activeInterval.subject).then((updatedLogs) => {
+          recordFocusMinutesByTimeline(activeInterval.user, activeInterval.startedAt, fromElapsed, currentElapsed, 'flow', 'flow', activeInterval.subject).then((updatedLogs) => {
             setLogs(updatedLogs)
           })
         }
@@ -526,7 +541,7 @@ function TimerPage() {
               recordedMinutes,
               suggestedMinutes: 180,
             }
-            try { localStorage.setItem(TIMER_RECOVERY_KEY, JSON.stringify(recovery)) } catch {}
+            void saveAccountState(currentOptions.user, TIMER_RECOVERY_NAMESPACE, recovery).catch(() => {})
             setTimerRecovery(recovery)
             setRecoveryMinutes(recovery.suggestedMinutes)
             setConfirmationOpen(false)
@@ -585,7 +600,7 @@ function TimerPage() {
     if (!timerRestored) return
     persistCurrentTimer()
     if (!running) return
-    const persistenceInterval = window.setInterval(persistCurrentTimer, 1000)
+    const persistenceInterval = window.setInterval(persistCurrentTimer, 15_000)
     return () => window.clearInterval(persistenceInterval)
   }, [timerRestored, running, timerMode, mode, extension, pomodoroMinutes, reminderMinutes, selectedSubject, persistCurrentTimer])
 
@@ -672,7 +687,7 @@ function TimerPage() {
       elapsedSeconds: 0,
       reminderSeconds: reminderLength * 60,
     }
-    savePersistedTimerSession({
+    savePersistedTimerSession(user, {
       running: false,
       timerMode,
       mode,
@@ -712,11 +727,15 @@ function TimerPage() {
     reset()
   }
 
-  const addSubject = () => {
+  const addSubject = async () => {
     const nextSubject = subjectDraft.trim().slice(0, 40)
     if (!nextSubject) return
     const nextSubjects = Array.from(new Set([...subjects, nextSubject]))
     saveLocalSubjects(nextSubjects, user)
+    if (user) {
+      try { await ensureOntologySubject(nextSubject) }
+      catch (error) { console.error('Failed to save subject to Supabase:', error); return }
+    }
     setSubjects(nextSubjects)
     selectSubject(nextSubject)
     setSubjectDraft('')
@@ -852,7 +871,7 @@ function TimerPage() {
               <div className="timer-recovery-card">
                 <div><p className="eyebrow">review auto-stopped time</p><strong>{timerRecovery.subject} · {timerRecovery.dateKey}</strong><span>Koko recorded {timerRecovery.recordedMinutes} minutes. Adjust it only if your actual focus time was different.</span></div>
                 <label><span>actual focus</span><input type="number" min="0" max="240" step="5" value={recoveryMinutes} onChange={(event) => setRecoveryMinutes(Math.max(0, Math.min(240, Number(event.target.value) || 0)))} /><small>min</small></label>
-                <div><button type="button" onClick={() => { try { localStorage.removeItem(TIMER_RECOVERY_KEY) } catch {}; setTimerRecovery(null) }}>keep recorded time</button><button type="button" disabled={recoverySaving} onClick={async () => { setRecoverySaving(true); try { await repairStudyDay(user, timerRecovery.dateKey, recoveryMinutes); setLogs(await loadStudyLogs(user)); try { localStorage.removeItem(TIMER_RECOVERY_KEY) } catch {}; setTimerRecovery(null) } finally { setRecoverySaving(false) } }}>{recoverySaving ? 'saving…' : 'save correction'}</button></div>
+                <div><button type="button" onClick={() => { void removeAccountState(user, TIMER_RECOVERY_NAMESPACE); setTimerRecovery(null) }}>keep recorded time</button><button type="button" disabled={recoverySaving} onClick={async () => { setRecoverySaving(true); try { await repairStudyDay(user, timerRecovery.dateKey, recoveryMinutes); setLogs(await loadStudyLogs(user)); await removeAccountState(user, TIMER_RECOVERY_NAMESPACE); setTimerRecovery(null) } finally { setRecoverySaving(false) } }}>{recoverySaving ? 'saving…' : 'save correction'}</button></div>
               </div>
             )}
 

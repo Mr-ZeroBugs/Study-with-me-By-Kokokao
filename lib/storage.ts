@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import type { User } from '@supabase/supabase-js'
+import { loadOntologySnapshot } from './ontology-client'
 
 export type DayLog = Record<string, number>
 export type SubjectDayLogs = Record<string, DayLog>
@@ -19,25 +20,19 @@ export type StudyInterval = {
   subjectId?: string
 }
 
-const LOCAL_STORAGE_KEY = 'study_timer_logs_v1'
-const LOCAL_STORAGE_SESSIONS_KEY = 'study_timer_sessions_count_v1'
-const LOCAL_STORAGE_SUBJECT_LOGS_KEY = 'study_timer_subject_logs_v1'
-const LOCAL_STORAGE_SUBJECTS_KEY = 'study_timer_subjects_v1'
-const LOCAL_STORAGE_INTERVALS_KEY = 'study_timer_intervals_v1'
-const LOCAL_STORAGE_ANOMALIES_KEY = 'study_timer_anomalies_v1'
 const DEFAULT_SUBJECT = 'General'
 export const MAX_DAILY_FOCUS_MINUTES = 24 * 60
 export const MAX_CONTINUOUS_FOCUS_SECONDS = 4 * 60 * 60
 export const SUSPICIOUS_DAILY_FOCUS_MINUTES = 12 * 60
 
-type LocalStorageScope = User | null | undefined
-
-// LocalStorage is shared by every account in the same browser. Keep the
-// guest cache backwards-compatible, but give each signed-in user an isolated
-// namespace so one account can never hydrate another account's study data.
-function scopedStorageKey(baseKey: string, scope?: LocalStorageScope) {
-  return scope?.id ? `${baseKey}_${scope.id}` : baseKey
-}
+type CacheScope = User | null | undefined
+const logsMemory = new Map<string, DayLog>()
+const roundsMemory = new Map<string, number>()
+const subjectsMemory = new Map<string, string[]>()
+const subjectLogsMemory = new Map<string, SubjectDayLogs>()
+const intervalsMemory = new Map<string, StudyInterval[]>()
+const anomaliesMemory = new Map<string, SuspiciousStudyDay[]>()
+function scopeKey(scope?: CacheScope) { return scope?.id ?? 'guest' }
 
 /**
  * Format Date to YYYY-MM-DD local date string key
@@ -80,102 +75,56 @@ export function calculateStreak(logs: DayLog): number {
 }
 
 /**
- * Read logs from LocalStorage
+ * Read the current tab's in-memory snapshot.
  */
-export function getLocalLogs(scope?: LocalStorageScope): DayLog {
-  if (typeof window === 'undefined') return {}
-  try {
-    const raw = localStorage.getItem(scopedStorageKey(LOCAL_STORAGE_KEY, scope))
-    const parsed = raw ? JSON.parse(raw) : {}
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    return Object.fromEntries(Object.entries(parsed).map(([dateKey, minutes]) => [
-      dateKey,
-      Math.min(MAX_DAILY_FOCUS_MINUTES, Math.max(0, Number(minutes) || 0)),
-    ]))
-  } catch (err) {
-    console.error('Error reading local logs:', err)
-    return {}
-  }
+export function getLocalLogs(scope?: CacheScope): DayLog {
+  return logsMemory.get(scopeKey(scope)) ?? {}
 }
 
 /**
- * Save logs to LocalStorage
+ * Update the current tab's in-memory snapshot.
  */
-export function saveLocalLogs(logs: DayLog, scope?: LocalStorageScope) {
-  if (typeof window === 'undefined') return
-  try {
-    const bounded = Object.fromEntries(Object.entries(logs).map(([dateKey, minutes]) => [
-      dateKey,
-      Math.min(MAX_DAILY_FOCUS_MINUTES, Math.max(0, Number(minutes) || 0)),
-    ]))
-    localStorage.setItem(scopedStorageKey(LOCAL_STORAGE_KEY, scope), JSON.stringify(bounded))
-  } catch (err) {
-    console.error('Error saving local logs:', err)
-  }
+export function saveLocalLogs(logs: DayLog, scope?: CacheScope) {
+  logsMemory.set(scopeKey(scope), Object.fromEntries(Object.entries(logs).map(([dateKey, minutes]) => [dateKey, Math.min(MAX_DAILY_FOCUS_MINUTES, Math.max(0, Number(minutes) || 0))])))
 }
 
 /**
- * Read today's session rounds from LocalStorage
+ * Read today's session rounds from the in-memory snapshot.
  */
-export function getLocalRounds(todayKey: string, scope?: LocalStorageScope): number {
-  if (typeof window === 'undefined') return 0
-  try {
-    const raw = localStorage.getItem(`${scopedStorageKey(LOCAL_STORAGE_SESSIONS_KEY, scope)}_${todayKey}`)
-    return raw ? Number(raw) : 0
-  } catch {
-    return 0
-  }
+export function getLocalRounds(todayKey: string, scope?: CacheScope): number {
+  return roundsMemory.get(`${scopeKey(scope)}:${todayKey}`) ?? 0
 }
 
 /**
- * Save today's session rounds to LocalStorage
+ * Update today's in-memory session rounds.
  */
-export function saveLocalRounds(todayKey: string, rounds: number, scope?: LocalStorageScope) {
-  if (typeof window === 'undefined') return
-  try {
-    localStorage.setItem(`${scopedStorageKey(LOCAL_STORAGE_SESSIONS_KEY, scope)}_${todayKey}`, String(rounds))
-  } catch {}
+export function saveLocalRounds(todayKey: string, rounds: number, scope?: CacheScope) {
+  roundsMemory.set(`${scopeKey(scope)}:${todayKey}`, rounds)
 }
 
-export function getLocalSubjects(scope?: LocalStorageScope): string[] {
-  if (typeof window === 'undefined') return [DEFAULT_SUBJECT]
-  try {
-    const raw = localStorage.getItem(scopedStorageKey(LOCAL_STORAGE_SUBJECTS_KEY, scope))
-    const parsed = raw ? JSON.parse(raw) : []
-    const subjects = Array.isArray(parsed)
-      ? parsed.filter((item): item is string => typeof item === 'string' && Boolean(item.trim())).map((item) => item.trim())
-      : []
-    return Array.from(new Set([DEFAULT_SUBJECT, ...subjects]))
-  } catch {
-    return [DEFAULT_SUBJECT]
-  }
+export async function loadStudyRounds(user: User | null, dateKey: string) {
+  if (!user) return getLocalRounds(dateKey, null)
+  const { data, error } = await supabase.from('daily_logs').select('rounds').eq('user_id', user.id).eq('date_key', dateKey).maybeSingle()
+  if (error) throw error
+  const rounds = Math.max(0, Number(data?.rounds) || 0)
+  saveLocalRounds(dateKey, rounds, user)
+  return rounds
 }
 
-export function saveLocalSubjects(subjects: string[], scope?: LocalStorageScope) {
-  if (typeof window === 'undefined') return
-  try {
-    localStorage.setItem(scopedStorageKey(LOCAL_STORAGE_SUBJECTS_KEY, scope), JSON.stringify(Array.from(new Set([DEFAULT_SUBJECT, ...subjects]))))
-  } catch {}
+export function getLocalSubjects(scope?: CacheScope): string[] {
+  return subjectsMemory.get(scopeKey(scope)) ?? [DEFAULT_SUBJECT]
 }
 
-export function getLocalSubjectLogs(scope?: LocalStorageScope): SubjectDayLogs {
-  if (typeof window === 'undefined') return {}
-  try {
-    const raw = localStorage.getItem(scopedStorageKey(LOCAL_STORAGE_SUBJECT_LOGS_KEY, scope))
-    return raw ? JSON.parse(raw) : {}
-  } catch (err) {
-    console.error('Error reading local subject logs:', err)
-    return {}
-  }
+export function saveLocalSubjects(subjects: string[], scope?: CacheScope) {
+  subjectsMemory.set(scopeKey(scope), Array.from(new Set([DEFAULT_SUBJECT, ...subjects])))
 }
 
-export function saveLocalSubjectLogs(logs: SubjectDayLogs, scope?: LocalStorageScope) {
-  if (typeof window === 'undefined') return
-  try {
-    localStorage.setItem(scopedStorageKey(LOCAL_STORAGE_SUBJECT_LOGS_KEY, scope), JSON.stringify(logs))
-  } catch (err) {
-    console.error('Error saving local subject logs:', err)
-  }
+export function getLocalSubjectLogs(scope?: CacheScope): SubjectDayLogs {
+  return subjectLogsMemory.get(scopeKey(scope)) ?? {}
+}
+
+export function saveLocalSubjectLogs(logs: SubjectDayLogs, scope?: CacheScope) {
+  subjectLogsMemory.set(scopeKey(scope), logs)
 }
 
 function normalizeStudyInterval(value: unknown): StudyInterval | null {
@@ -207,24 +156,12 @@ export function createStudyIntervalId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
-export function getLocalStudyIntervals(scope?: LocalStorageScope): StudyInterval[] {
-  if (typeof window === 'undefined') return []
-  try {
-    const raw = localStorage.getItem(scopedStorageKey(LOCAL_STORAGE_INTERVALS_KEY, scope))
-    const parsed = raw ? JSON.parse(raw) : []
-    return Array.isArray(parsed)
-      ? parsed.map(normalizeStudyInterval).filter((item): item is StudyInterval => Boolean(item))
-      : []
-  } catch {
-    return []
-  }
+export function getLocalStudyIntervals(scope?: CacheScope): StudyInterval[] {
+  return intervalsMemory.get(scopeKey(scope)) ?? []
 }
 
-export function saveLocalStudyIntervals(intervals: StudyInterval[], scope?: LocalStorageScope) {
-  if (typeof window === 'undefined') return
-  try {
-    localStorage.setItem(scopedStorageKey(LOCAL_STORAGE_INTERVALS_KEY, scope), JSON.stringify(intervals))
-  } catch {}
+export function saveLocalStudyIntervals(intervals: StudyInterval[], scope?: CacheScope) {
+  intervalsMemory.set(scopeKey(scope), intervals)
 }
 
 /** Fetch the start/stop segments used by the daily focus timeline. */
@@ -250,9 +187,8 @@ export async function loadStudyIntervals(user: User | null): Promise<StudyInterv
       subject: row.subject,
       subjectId: row.subject_id,
     })).filter((item): item is StudyInterval => Boolean(item))
-    const merged = Array.from(new Map([...cloudIntervals, ...localIntervals].map((item) => [item.id, item])).values())
-    saveLocalStudyIntervals(merged, user)
-    return merged
+    saveLocalStudyIntervals(cloudIntervals, user)
+    return cloudIntervals
   } catch {
     return localIntervals
   }
@@ -318,19 +254,6 @@ export async function recordStudyInterval(user: User | null, interval: StudyInte
   }
 }
 
-function mergeSubjectLogs(base: SubjectDayLogs, incoming: SubjectDayLogs): SubjectDayLogs {
-  const merged: SubjectDayLogs = Object.fromEntries(
-    Object.entries(base).map(([subject, days]) => [subject, { ...days }])
-  )
-  for (const [subject, days] of Object.entries(incoming)) {
-    merged[subject] ??= {}
-    for (const [dateKey, minutes] of Object.entries(days)) {
-      merged[subject][dateKey] = Math.max(merged[subject][dateKey] ?? 0, minutes)
-    }
-  }
-  return merged
-}
-
 /** Fetch per-subject daily minutes, with a General bucket for legacy totals. */
 export async function loadSubjectLogs(user: User | null, reconciledDailyLogs?: DayLog): Promise<SubjectDayLogs> {
   const localSubjectLogs = getLocalSubjectLogs(user)
@@ -364,15 +287,15 @@ export async function loadSubjectLogs(user: User | null, reconciledDailyLogs?: D
       cloudLogs[subject] ??= {}
       cloudLogs[subject][row.date_key] = (cloudLogs[subject][row.date_key] ?? 0) + Math.max(0, Math.round((row.duration_seconds ?? 0) / 60))
     }
-    const merged = mergeSubjectLogs(localSubjectLogs, cloudLogs)
     const safeDailyLogs = reconciledDailyLogs ?? await loadStudyLogs(user)
-    const reconciled = reconcileSubjectLogsToDaily(merged, safeDailyLogs)
+    const reconciled = reconcileSubjectLogsToDaily(cloudLogs, safeDailyLogs)
     saveLocalSubjectLogs(reconciled, user)
     // A subject may be created before it has any study sessions. Loading
     // analytics must never replace the explicit subject library with only the
     // subjects present in historical logs, or a brand-new subject disappears
     // as soon as the learner opens Tasks/Stats.
-    saveLocalSubjects([...getLocalSubjects(user), ...Object.keys(reconciled)], user)
+    const ontologySubjects = await loadOntologySnapshot().then((snapshot) => snapshot.subjects.flatMap((subject) => typeof subject.name === 'string' ? [subject.name] : [])).catch(() => [])
+    saveLocalSubjects([DEFAULT_SUBJECT, ...ontologySubjects, ...Object.keys(reconciled)], user)
     return reconciled
   } catch (err) {
     console.error('Failed to load subject logs from Supabase:', err)
@@ -428,7 +351,7 @@ export async function loadCanonicalSubjectLogs(user: User | null): Promise<Canon
 }
 
 /**
- * Fetch all study logs for the user (from Supabase if authenticated, merged with LocalStorage)
+ * Fetch canonical study logs from Supabase for authenticated users.
  */
 export async function loadStudyLogs(user: User | null): Promise<DayLog> {
   const localLogs = getLocalLogs(user)
@@ -467,17 +390,12 @@ export async function loadStudyLogs(user: User | null): Promise<DayLog> {
       }
     }
 
-    // Merge cloud and local logs taking the higher value
-    const merged: DayLog = { ...localLogs }
-    for (const [key, minutes] of Object.entries(cloudLogs)) {
-      merged[key] = Math.max(merged[key] ?? 0, minutes)
-    }
-
     const cloudIntervals = (intervalResponse.data ?? []).map((row) => normalizeStudyInterval({
       id: row.id, startedAt: row.started_at, endedAt: row.ended_at, durationSeconds: row.duration_seconds,
       timerMode: row.timer_mode, mode: row.mode, subject: row.subject, subjectId: row.subject_id,
     })).filter((item): item is StudyInterval => Boolean(item))
-    return reconcile(merged, [...cloudIntervals, ...getLocalStudyIntervals(user)])
+    saveLocalStudyIntervals(cloudIntervals, user)
+    return reconcile(cloudLogs, cloudIntervals)
   } catch (err) {
     console.error('Failed to load study logs from Supabase:', err)
     return reconcile(localLogs, getLocalStudyIntervals(user))
@@ -510,7 +428,7 @@ export async function recordFocusSession(
     [todayKey]: newTotal,
   }
 
-  // Always save to LocalStorage immediately
+  // Update the current view immediately; Supabase remains durable truth.
   saveLocalLogs(updatedLogs, user)
   const updatedSubjectLogs: SubjectDayLogs = {
     ...currentSubjectLogs,
@@ -677,17 +595,12 @@ export function defendStudyHistory(logs: DayLog, intervals: StudyInterval[]) {
   return { safeLogs, suspiciousDays }
 }
 
-export function getLocalStudyAnomalies(scope?: LocalStorageScope): SuspiciousStudyDay[] {
-  if (typeof window === 'undefined') return []
-  try {
-    const parsed = JSON.parse(localStorage.getItem(scopedStorageKey(LOCAL_STORAGE_ANOMALIES_KEY, scope)) ?? '[]')
-    return Array.isArray(parsed) ? parsed.filter((item) => item?.dateKey && Array.isArray(item.relatedDateKeys)) : []
-  } catch { return [] }
+export function getLocalStudyAnomalies(scope?: CacheScope): SuspiciousStudyDay[] {
+  return anomaliesMemory.get(scopeKey(scope)) ?? []
 }
 
-function saveLocalStudyAnomalies(anomalies: SuspiciousStudyDay[], scope?: LocalStorageScope) {
-  if (typeof window === 'undefined') return
-  try { localStorage.setItem(scopedStorageKey(LOCAL_STORAGE_ANOMALIES_KEY, scope), JSON.stringify(anomalies)) } catch {}
+function saveLocalStudyAnomalies(anomalies: SuspiciousStudyDay[], scope?: CacheScope) {
+  anomaliesMemory.set(scopeKey(scope), anomalies)
 }
 
 export async function repairStudyIncident(user: User | null, incident: SuspiciousStudyDay, minutes: number) {

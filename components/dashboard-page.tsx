@@ -9,17 +9,11 @@ import {
   type DayLog, type StudyInterval, type SubjectDayLogs,
 } from '../lib/storage'
 import { loadLocalPlannerData, loadPlannerData, type PlannerData } from '../lib/planner-storage'
-import {
-  getLevelInfo, getWeekMinutes, getWeekTimeLeft,
-  getTodayQuests, loadGameState, saveGameState, reconcileGameState,
-  type GameState,
-} from '../lib/gamification'
 import { LineConnectModal } from './line-connect-modal'
 import { AuthModal } from './auth-modal'
 import { KokoRoom } from './koko-room'
-import { LevelUpModal } from './level-up-modal'
-import { AchievementToastStack } from './achievement-toast'
-import { loadKokoRhythmPlan, RHYTHM_UPDATED_EVENT, type KokoRhythmPlan } from '../lib/rhythm-storage'
+import { createDefaultKokoRhythmPlan, loadKokoRhythmPlan, RHYTHM_UPDATED_EVENT, saveKokoRhythmPlan, type KokoRhythmPlan } from '../lib/rhythm-storage'
+import { loadRhythmPlanFromOntology } from '../lib/rhythm-ontology'
 import { chooseNextBestAction } from '../lib/next-best-action'
 import { buildAdaptiveProposals, buildAdaptiveSignals, type PlannerBehaviorEvent } from '../lib/adaptive-planner'
 import { loadPlannerBehaviorEvents, recordPlannerBehaviorEvent } from '../lib/adaptive-planner-client'
@@ -50,13 +44,6 @@ export function DashboardPage() {
   const [memoryItems,     setMemoryItems]     = useState<PersonalMemoryItem[]>([])
   const [managerFeedback, setManagerFeedback] = useState<ManagerFeedbackEvent[]>([])
   const [now,             setNow]             = useState(() => new Date())
-  const [gameState,       setGameState]       = useState<GameState>({
-    version: 2, gems: 0, unlockedAchievements: [], lastSeenLevel: 1,
-    pendingLevelUp: null, pendingAchievements: [],
-  })
-  const [showLevelUp,      setShowLevelUp]     = useState<number | null>(null)
-  const [achievementQueue, setAchievementQueue] = useState<string[]>([])
-  const [dataLoaded,       setDataLoaded]       = useState(false)
 
   // ── Load data ──────────────────────────────────────────────────
   useEffect(() => {
@@ -71,7 +58,14 @@ export function DashboardPage() {
       ])
       const nextSubjectLogs = await loadSubjectLogs(u, nextLogs)
       if (id !== reqId) return
-      setLogs(nextLogs); setSubjectLogs(nextSubjectLogs); setPlanner(nextPlanner); setIntervals(nextIntervals); setDataLoaded(true)
+      setLogs(nextLogs); setSubjectLogs(nextSubjectLogs); setPlanner(nextPlanner); setIntervals(nextIntervals)
+      if (u) {
+        void loadRhythmPlanFromOntology(createDefaultKokoRhythmPlan(Object.keys(nextSubjectLogs))).then((cloudPlan) => {
+          if (id !== reqId || !cloudPlan) return
+          saveKokoRhythmPlan(u, cloudPlan)
+          setRhythmPlan(cloudPlan)
+        }).catch(() => {})
+      }
 
       void Promise.all([
         loadPlannerBehaviorEvents(u),
@@ -83,11 +77,11 @@ export function DashboardPage() {
       })
     }
     const applySession = (u: User | null) => {
-      // Render the per-account local snapshot immediately. Remote sync then
-      // refreshes it in place instead of showing an empty recommendation card.
+      // Render the in-memory snapshot immediately, then replace it with the
+      // signed-in account's canonical Supabase data.
       setUser(u); setLogs(getLocalLogs(u)); setSubjectLogs(getLocalSubjectLogs(u))
       setPlanner(loadLocalPlannerData(u)); setIntervals(getLocalStudyIntervals(u))
-      setBehaviorEvents([]); setMemoryItems([]); setManagerFeedback([]); setDataLoaded(true)
+      setBehaviorEvents([]); setMemoryItems([]); setManagerFeedback([])
       void loadData(u)
     }
     supabase.auth.getSession().then(({ data }) => applySession(data.session?.user ?? null))
@@ -106,13 +100,7 @@ export function DashboardPage() {
   // ── Derived ────────────────────────────────────────────────────
   const todayKey            = getLocalDateKey(now)
   const todayMinutes        = logs[todayKey] ?? 0
-  const totalMinutes        = useMemo(() => Object.values(logs).reduce((s, m) => s + m, 0), [logs])
   const streak              = useMemo(() => calculateStreak(logs), [logs])
-  const weekMinutes         = useMemo(() => getWeekMinutes(logs, now), [logs, now])
-  const { level, xpIntoLevel, xpToNextLevel, progress: xpProgress } = getLevelInfo(totalMinutes)
-  const weekTimeLeft        = getWeekTimeLeft(now)
-  const quests              = useMemo(() => getTodayQuests(todayKey), [todayKey])
-  const questData           = { todayMinutes, streak, weekMinutes }
 
   // Tasks
   const todayTasks = useMemo(() =>
@@ -187,39 +175,11 @@ export function DashboardPage() {
       .sort((a, b) => a.eventDate.localeCompare(b.eventDate)),
     [planner.events, todayKey])
 
-  // ── Gamification reconciliation ────────────────────────────────
-  useEffect(() => {
-    if (!dataLoaded) return
-    const stored = loadGameState()
-    const { state } = reconcileGameState(stored, level, {
-      totalMinutes, todayMinutes, streak,
-      taskCount: planner.tasks.length,
-      rhythmAnchorCount: Number(Boolean(rhythmPlan?.majorGroupId)) + Number(Boolean(rhythmPlan?.minorGroupId)),
-      level, weekMinutes,
-    })
-    let next = { ...state }
-    if (next.pendingLevelUp !== null) {
-      setShowLevelUp(next.pendingLevelUp); next = { ...next, pendingLevelUp: null }
-    }
-    if (next.pendingAchievements.length > 0) {
-      setAchievementQueue(next.pendingAchievements); next = { ...next, pendingAchievements: [] }
-    }
-    setGameState(next); saveGameState(next)
-  }, [dataLoaded, totalMinutes, todayMinutes, streak, weekMinutes, level, planner.tasks.length, rhythmPlan])
-
   return (
     <>
-      {showLevelUp !== null && (
-        <LevelUpModal level={showLevelUp} gemsEarned={5} onClose={() => setShowLevelUp(null)} />
-      )}
-      <AchievementToastStack achievementIds={achievementQueue} onDismissAll={() => setAchievementQueue([])} />
-
       <KokoRoom
         now={now} user={user}
-        todayMinutes={todayMinutes} totalMinutes={totalMinutes}
-        streak={streak} weekMinutes={weekMinutes} weekTimeLeft={weekTimeLeft}
-        level={level} xpIntoLevel={xpIntoLevel} xpToNextLevel={xpToNextLevel} xpProgress={xpProgress}
-        gameState={gameState} quests={quests} questData={questData}
+        todayMinutes={todayMinutes} streak={streak}
         todayTasks={todayTasks} openTasks={openTasks} completedTodayCount={completedTodayCount}
         upcomingEvents={upcomingEvents}
         subjectLogs={subjectLogs} nextBestAction={nextBestAction} proactiveWindow={proactiveWindow} presentation={presentation} onAcceptNextAction={handleNextActionAccepted} onDismissNextAction={handleNextActionDismissed} onAcceptProactive={handleProactiveAccepted} onDismissProactive={handleProactiveDismissed}

@@ -69,7 +69,7 @@ async function insertLineTask(admin: ReturnType<typeof getSupabaseAdmin>, task: 
   const result = await admin.from('planner_tasks').insert(normalizedTask)
   // V1 is additive and may not have been run on every environment yet. Do not
   // turn a harmless missing column into a lost LINE task during rollout.
-  if (result.error && /subject_id|normalized_title|subject_key|deadline_confidence|schema cache|column/i.test(result.error.message)) {
+  if (result.error && /subject_id|linked subject|must belong to you|normalized_title|subject_key|deadline_confidence|schema cache|column/i.test(result.error.message)) {
     const fallback = await admin.from('planner_tasks').insert(legacyTask)
     return { ...fallback, duplicate: null }
   }
@@ -95,6 +95,42 @@ async function insertLineEvent(admin: ReturnType<typeof getSupabaseAdmin>, event
 
   const result = await admin.from('planner_events').insert({ ...event, title })
   return { ...result, duplicate: null }
+}
+
+/** LINE uses a service-role client, so it deliberately writes the display
+ * subject rather than an RLS-protected subject_id reference. The web client
+ * can enrich that relation later without blocking a plain-language edit. */
+async function updateLineTask(admin: ReturnType<typeof getSupabaseAdmin>, userId: string, taskId: string, current: Record<string, unknown>, changes: Record<string, unknown>) {
+  const title = typeof changes.title === 'string' ? changes.title : String(current.title ?? '')
+  const subject = typeof changes.subject === 'string' ? changes.subject : String(current.subject ?? 'General')
+  const dueDate = changes.clear_deadline === true ? null : typeof changes.due_date === 'string' ? changes.due_date : current.due_date ?? null
+  const intelligence = prepareTaskInput({ title, subject, dueDate: typeof dueDate === 'string' ? dueDate : '', deadlineConfidence: dueDate ? 'explicit' : 'none' })
+  const row = {
+    title: intelligence.title,
+    subject: intelligence.subject,
+    due_date: dueDate,
+    estimated_minutes: typeof changes.estimated_minutes === 'number' ? changes.estimated_minutes : current.estimated_minutes ?? 25,
+    priority: typeof changes.priority === 'number' ? changes.priority : current.priority ?? 2,
+    normalized_title: intelligence.normalizedTitle,
+    subject_key: intelligence.subjectKey,
+    deadline_confidence: intelligence.deadlineConfidence,
+  }
+  let result = await admin.from('planner_tasks').update(row).eq('id', taskId).eq('user_id', userId).is('workspace_id', null).select('id, title, subject, due_date, estimated_minutes, priority').maybeSingle()
+  if (result.error && /normalized_title|subject_key|deadline_confidence|schema cache|column/i.test(result.error.message)) {
+    const { normalized_title: _normalizedTitle, subject_key: _subjectKey, deadline_confidence: _deadlineConfidence, ...legacyRow } = row
+    result = await admin.from('planner_tasks').update(legacyRow).eq('id', taskId).eq('user_id', userId).is('workspace_id', null).select('id, title, subject, due_date, estimated_minutes, priority').maybeSingle()
+  }
+  return result
+}
+
+async function updateLineEvent(admin: ReturnType<typeof getSupabaseAdmin>, userId: string, eventId: string, current: Record<string, unknown>, changes: Record<string, unknown>) {
+  const row = {
+    title: typeof changes.title === 'string' ? changes.title : current.title,
+    event_date: typeof changes.event_date === 'string' ? changes.event_date : current.event_date,
+    type: typeof changes.type === 'string' ? changes.type : current.type,
+    notes: typeof changes.notes === 'string' ? changes.notes : current.notes ?? '',
+  }
+  return admin.from('planner_events').update(row).eq('id', eventId).eq('user_id', userId).is('workspace_id', null).select('id, title, event_date, type').maybeSingle()
 }
 
 function isWebsiteLinkRequest(text: string) {
@@ -522,6 +558,7 @@ export async function POST(request: Request) {
                   estimated_minutes: item.estimatedMinutes, priority: item.priority, completed: false,
                   created_at: new Date().toISOString(),
                 })
+                if (error) console.error('Failed to create LINE batch task:', { title: item.title, error: error.message, code: 'code' in error ? error.code : undefined })
                 summary.push({ kind: 'task', title: item.title, subject: resolvedSubject.name, date: item.dueDate, status: duplicate ? 'duplicate' : error ? 'failed' : 'created' })
                 continue
               }
@@ -530,6 +567,7 @@ export async function POST(request: Request) {
                 id: crypto.randomUUID(), user_id: userId, title: item.title, event_date: item.eventDate,
                 type: item.type, notes: item.notes, created_at: new Date().toISOString(),
               })
+              if (error) console.error('Failed to create LINE batch event:', { title: item.title, error: error.message, code: 'code' in error ? error.code : undefined })
               summary.push({ kind: 'event', title: item.title, date: item.eventDate, status: duplicate ? 'duplicate' : error ? 'failed' : 'created' })
             }
             await sendLineReply(replyToken, [createBatchCaptureFlex(summary)])
@@ -644,6 +682,87 @@ export async function POST(request: Request) {
               ])
               continue
             }
+          }
+
+          // --- AI ACTION: EDIT_TASK ---
+          if (aiResult.action === 'EDIT_TASK') {
+            const { data: matches, error: findError } = await admin
+              .from('planner_tasks')
+              .select('id, title, subject, due_date, estimated_minutes, priority')
+              .eq('user_id', userId)
+              .is('workspace_id', null)
+              .eq('completed', false)
+              .ilike('title', `%${aiResult.taskQuery}%`)
+              .limit(3)
+            if (findError || !matches?.length) {
+              await sendLineReply(replyToken, [{ type: 'text', text: `ยังหา task ที่ชื่อใกล้กับ “${aiResult.taskQuery}” ไม่เจอครับ ลองพิมพ์ชื่อให้ชัดขึ้นอีกนิดนะ` }])
+              continue
+            }
+            if (matches.length > 1) {
+              await sendLineReply(replyToken, [{ type: 'text', text: `เจองานที่คล้ายกัน ${matches.length} งานครับ: ${matches.map((task) => `“${task.title}”`).join(', ')}\n\nช่วยพิมพ์ชื่อที่ต้องการแก้ให้เฉพาะขึ้นอีกนิดนะ` }])
+              continue
+            }
+            const currentTask = matches[0]
+            const resolvedSubject = aiResult.subject ? resolveLineSubject(ontologyContext, aiResult.subject).name : undefined
+            const { data: updated, error: updateError } = await updateLineTask(admin, userId, currentTask.id, currentTask, {
+              ...(aiResult.title ? { title: aiResult.title } : {}),
+              ...(resolvedSubject ? { subject: resolvedSubject } : {}),
+              ...(aiResult.dueDate ? { due_date: aiResult.dueDate } : {}),
+              ...(aiResult.clearDeadline ? { clear_deadline: true } : {}),
+              ...(aiResult.priority ? { priority: aiResult.priority } : {}),
+              ...(aiResult.estimatedMinutes ? { estimated_minutes: aiResult.estimatedMinutes } : {}),
+            })
+            if (updateError || !updated) {
+              console.error('Failed to edit LINE task:', updateError)
+              await sendLineReply(replyToken, [{ type: 'text', text: 'แก้ task นี้ไม่สำเร็จครับ ลองใหม่อีกครั้ง หรือเปิด Planner เพื่อแก้โดยตรงนะ' }])
+              continue
+            }
+            const changed: string[] = []
+            if (aiResult.title) changed.push(`ชื่อ: ${updated.title}`)
+            if (resolvedSubject) changed.push(`วิชา: ${updated.subject}`)
+            if (aiResult.dueDate || aiResult.clearDeadline) changed.push(`กำหนด: ${updated.due_date || 'ไม่ระบุ'}`)
+            if (aiResult.priority) changed.push(`priority: ${updated.priority}`)
+            if (aiResult.estimatedMinutes) changed.push(`เวลา: ${updated.estimated_minutes} นาที`)
+            await sendLineReply(replyToken, [{ type: 'text', text: `✏️ แก้ไข “${updated.title}” แล้วครับ\n\n${changed.map((item) => `• ${item}`).join('\n')}${aiResult.aiComment ? `\n\n${aiResult.aiComment}` : ''}` }])
+            continue
+          }
+
+          // --- AI ACTION: EDIT_EVENT ---
+          if (aiResult.action === 'EDIT_EVENT') {
+            const { data: matches, error: findError } = await admin
+              .from('planner_events')
+              .select('id, title, event_date, type, notes')
+              .eq('user_id', userId)
+              .is('workspace_id', null)
+              .ilike('title', `%${aiResult.eventQuery}%`)
+              .limit(3)
+            if (findError || !matches?.length) {
+              await sendLineReply(replyToken, [{ type: 'text', text: `ยังหา important date ที่ชื่อใกล้กับ “${aiResult.eventQuery}” ไม่เจอครับ ลองพิมพ์ชื่อให้ชัดขึ้นอีกนิดนะ` }])
+              continue
+            }
+            if (matches.length > 1) {
+              await sendLineReply(replyToken, [{ type: 'text', text: `เจอวันสำคัญที่คล้ายกัน ${matches.length} รายการครับ: ${matches.map((item) => `“${item.title}”`).join(', ')}\n\nช่วยพิมพ์ชื่อที่ต้องการแก้ให้เฉพาะขึ้นอีกนิดนะ` }])
+              continue
+            }
+            const currentEvent = matches[0]
+            const { data: updated, error: updateError } = await updateLineEvent(admin, userId, currentEvent.id, currentEvent, {
+              ...(aiResult.title ? { title: aiResult.title } : {}),
+              ...(aiResult.eventDate ? { event_date: aiResult.eventDate } : {}),
+              ...(aiResult.type ? { type: aiResult.type } : {}),
+              ...(aiResult.notes !== undefined ? { notes: aiResult.notes } : {}),
+            })
+            if (updateError || !updated) {
+              console.error('Failed to edit LINE event:', updateError)
+              await sendLineReply(replyToken, [{ type: 'text', text: 'แก้วันสำคัญนี้ไม่สำเร็จครับ ลองใหม่อีกครั้ง หรือเปิด Planner เพื่อแก้โดยตรงนะ' }])
+              continue
+            }
+            const changed: string[] = []
+            if (aiResult.title) changed.push(`ชื่อ: ${updated.title}`)
+            if (aiResult.eventDate) changed.push(`วันที่: ${updated.event_date}`)
+            if (aiResult.type) changed.push(`ประเภท: ${updated.type}`)
+            if (aiResult.notes !== undefined) changed.push('อัปเดตโน้ตแล้ว')
+            await sendLineReply(replyToken, [{ type: 'text', text: `✏️ แก้ไขวันสำคัญ “${updated.title}” แล้วครับ\n\n${changed.map((item) => `• ${item}`).join('\n')}${aiResult.aiComment ? `\n\n${aiResult.aiComment}` : ''}` }])
+            continue
           }
 
           // --- AI ACTION: COMPLETE_TASK ---

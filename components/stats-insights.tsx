@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Activity, AlertTriangle, ArrowUpRight, CalendarDays, ChevronLeft, ChevronRight, Clock3, Flame, Lightbulb, Pause, Play, Sparkles } from 'lucide-react'
 import { getLocalDateKey, type DayLog, type StudyInterval, type SubjectDayLogs, type SuspiciousStudyDay } from '../lib/storage'
-import { getIntensityThreshold } from '../lib/theme'
+import { INTENSITY_UPDATED_EVENT, loadIntensityThreshold } from '../lib/theme'
+import { supabase } from '../lib/supabase'
 import type { PlannerTask } from '../lib/planner-storage'
 import { createActionableInsights } from '../lib/insight-engine'
 import type { KokoRhythmPlan } from '../lib/rhythm-storage'
@@ -155,7 +156,7 @@ export function StatsInsights({ logs, intervals, subjectLogs, tasks, rhythmPlan 
   const [referenceDate, setReferenceDate] = useState(() => new Date(2000, 0, 1, 12))
   const [selectedDateKey, setSelectedDateKey] = useState('2000-01-01')
   const [calendarDate, setCalendarDate] = useState(() => new Date(2000, 0, 1, 12))
-  const [highThreshold, setHighThreshold] = useState(90) // updated from localStorage on mount
+  const [highThreshold, setHighThreshold] = useState(90)
   const [repairMinutes, setRepairMinutes] = useState<Record<string, number>>({})
   const [repairingDay, setRepairingDay] = useState('')
 
@@ -164,19 +165,17 @@ export function StatsInsights({ logs, intervals, subjectLogs, tasks, rhythmPlan 
     setReferenceDate(current)
     setSelectedDateKey(keyFromDate(current))
     setCalendarDate(new Date(current.getFullYear(), current.getMonth(), current.getDate(), 12))
-    setHighThreshold(getIntensityThreshold())
+    void supabase.auth.getUser().then(({ data }) => loadIntensityThreshold(data.user)).then(setHighThreshold).catch(() => {})
   }, [])
 
   // Sync threshold when user changes it in Settings (same-page StorageEvent)
   useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === 'study_intensity_threshold' && e.newValue) {
-        const val = parseInt(e.newValue, 10)
-        if (Number.isFinite(val) && val >= 15) setHighThreshold(val)
-      }
+    const onIntensity = (e: Event) => {
+      const val = (e as CustomEvent<number>).detail
+      if (Number.isFinite(val) && val >= 15) setHighThreshold(val)
     }
-    window.addEventListener('storage', onStorage)
-    return () => window.removeEventListener('storage', onStorage)
+    window.addEventListener(INTENSITY_UPDATED_EVENT, onIntensity)
+    return () => window.removeEventListener(INTENSITY_UPDATED_EVENT, onIntensity)
   }, [])
 
   const intervalMinutesByDay = useMemo(() => intervals.reduce<Record<string, number>>((totals, interval) => {

@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarDays, Circle, Coffee, Copy, Droplets, Flower2, Heart, ListChecks, LogIn, MessageCircle, Moon, NotebookPen, Plus, Sparkles, Trash2, UsersRound, X } from 'lucide-react'
+import { CalendarDays, Circle, Coffee, Copy, Droplets, Flower2, Heart, ListChecks, LogIn, MessageCircle, Moon, NotebookPen, Pencil, Plus, Save, Sparkles, Trash2, UsersRound, X } from 'lucide-react'
 import { getLocalDateKey } from '../lib/storage'
 import type { PlannerData, PlannerEvent, PlannerEventType, PlannerTask, SharedWorkspace, SharedWorkspaceMember, TaskPriority } from '../lib/planner-storage'
 import type { User } from '@supabase/supabase-js'
@@ -9,14 +9,9 @@ import { LineConnectModal } from './line-connect-modal'
 import { AuthModal } from './auth-modal'
 import { supabase } from '../lib/supabase'
 import { rhythmRoleForSubject, type KokoRhythmPlan } from '../lib/rhythm-storage'
+import { loadAccountState, saveAccountState } from '../lib/account-state'
 
 const eventLabels: Record<PlannerEventType, string> = { competition: 'competition', project: 'project', exam: 'exam', important: 'important' }
-const NOTEBOOK_KEY = 'study_timer_task_notebook_v1'
-
-function notebookStorageKey(user: User | null) {
-  return user?.id ? `${NOTEBOOK_KEY}_${user.id}` : NOTEBOOK_KEY
-}
-
 type TaskNotebookProps = {
   user?: User | null
   data: PlannerData
@@ -47,6 +42,8 @@ type TaskNotebookProps = {
   toggleTask: (id: string) => void
   deleteTask: (id: string) => void
   deleteEvent: (id: string) => void
+  updateTask: (id: string, changes: Pick<PlannerTask, 'title' | 'subject' | 'dueDate' | 'estimatedMinutes' | 'priority'>) => void
+  updateEvent: (id: string, changes: Pick<PlannerEvent, 'title' | 'eventDate' | 'type' | 'notes'>) => void
   workspaceId: string | null
   workspace: SharedWorkspace | null
   workspaces: SharedWorkspace[]
@@ -114,6 +111,8 @@ export function TaskNotebook({
   toggleTask,
   deleteTask,
   deleteEvent,
+  updateTask,
+  updateEvent,
   workspaceId,
   workspace,
   workspaces,
@@ -135,15 +134,26 @@ export function TaskNotebook({
   const [rememberNote, setRememberNote] = useState('')
   const [pageNote, setPageNote] = useState('')
   const [notesReady, setNotesReady] = useState(false)
-  const skipNextNotesWriteRef = useRef(false)
+  const [notesOwnerKey, setNotesOwnerKey] = useState<string | null>(null)
+  const notesSaveTimerRef = useRef<number | null>(null)
   const [calendarDate, setCalendarDate] = useState(() => new Date(2000, 0, 1))
   const [selectedDate, setSelectedDate] = useState('')
   const [captureType, setCaptureType] = useState<CaptureType>('task')
+  const [showTaskDetails, setShowTaskDetails] = useState(false)
   const [workspaceAction, setWorkspaceAction] = useState<'create' | 'join' | null>(null)
   const [workspaceName, setWorkspaceName] = useState('')
   const [inviteCode, setInviteCode] = useState('')
   const [workspaceFormError, setWorkspaceFormError] = useState<string | null>(null)
   const [workspaceMembersOpen, setWorkspaceMembersOpen] = useState(false)
+  const [editingTask, setEditingTask] = useState<PlannerTask | null>(null)
+  const [editingEvent, setEditingEvent] = useState<PlannerEvent | null>(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [editSubject, setEditSubject] = useState('General')
+  const [editDate, setEditDate] = useState('')
+  const [editPriority, setEditPriority] = useState<TaskPriority>(2)
+  const [editMinutes, setEditMinutes] = useState(25)
+  const [editEventType, setEditEventType] = useState<PlannerEventType>('important')
+  const [editNotes, setEditNotes] = useState('')
 
   useEffect(() => {
     setCurrentUser(user ?? null)
@@ -176,26 +186,29 @@ export function TaskNotebook({
 
 
   useEffect(() => {
-    skipNextNotesWriteRef.current = true
     setNotesReady(false)
-    try {
-      const saved = JSON.parse(window.localStorage.getItem(notebookStorageKey(currentUser)) ?? '{}') as Record<string, unknown>
+    setNotesOwnerKey(null)
+    const ownerKey = currentUser?.id ?? 'guest'
+    let active = true
+    void loadAccountState<Record<string, unknown>>(currentUser, 'planner_notes', {}).then((saved) => {
+      if (!active) return
       setRememberNote(typeof saved.remember === 'string' ? saved.remember : '')
       setPageNote(typeof saved.page === 'string' ? saved.page : '')
-    } catch {
-      // Notes are optional; a malformed local value should never block the task page.
-    }
-    setNotesReady(true)
+      setNotesOwnerKey(ownerKey)
+      setNotesReady(true)
+    }).catch(() => { if (active) setNotesReady(true) })
+    return () => { active = false }
   }, [currentUser])
 
   useEffect(() => {
-    if (!notesReady) return
-    if (skipNextNotesWriteRef.current) {
-      skipNextNotesWriteRef.current = false
-      return
-    }
-    window.localStorage.setItem(notebookStorageKey(currentUser), JSON.stringify({ remember: rememberNote, page: pageNote }))
-  }, [currentUser, notesReady, pageNote, rememberNote])
+    if (!notesReady || notesOwnerKey !== (currentUser?.id ?? 'guest')) return
+    if (notesSaveTimerRef.current) window.clearTimeout(notesSaveTimerRef.current)
+    notesSaveTimerRef.current = window.setTimeout(() => {
+      void saveAccountState(currentUser, 'planner_notes', { remember: rememberNote, page: pageNote })
+        .catch((saveError) => console.error('Failed to save planner notes:', saveError))
+    }, 350)
+    return () => { if (notesSaveTimerRef.current) window.clearTimeout(notesSaveTimerRef.current) }
+  }, [currentUser, notesOwnerKey, notesReady, pageNote, rememberNote])
 
   useEffect(() => {
     const now = new Date()
@@ -260,6 +273,42 @@ export function TaskNotebook({
       setWorkspaceMembersOpen(false)
     } catch (error) {
       setWorkspaceFormError(error instanceof Error ? error.message : isOwner ? 'Could not delete the shared space.' : 'Could not leave the shared space.')
+    }
+  }
+
+  const openTaskEditor = (task: PlannerTask) => {
+    setEditingEvent(null)
+    setEditingTask(task)
+    setEditTitle(task.title)
+    setEditSubject(task.subject)
+    setEditDate(task.dueDate)
+    setEditPriority(task.priority)
+    setEditMinutes(task.estimatedMinutes)
+  }
+
+  const openEventEditor = (event: PlannerEvent) => {
+    setEditingTask(null)
+    setEditingEvent(event)
+    setEditTitle(event.title)
+    setEditDate(event.eventDate)
+    setEditEventType(event.type)
+    setEditNotes(event.notes)
+  }
+
+  const closeEditor = () => {
+    setEditingTask(null)
+    setEditingEvent(null)
+  }
+
+  const saveEditor = () => {
+    if (editingTask) {
+      updateTask(editingTask.id, { title: editTitle, subject: editSubject, dueDate: editDate, priority: editPriority, estimatedMinutes: editMinutes })
+      closeEditor()
+      return
+    }
+    if (editingEvent) {
+      updateEvent(editingEvent.id, { title: editTitle, eventDate: editDate, type: editEventType, notes: editNotes })
+      closeEditor()
     }
   }
 
@@ -335,13 +384,16 @@ export function TaskNotebook({
               {captureType === 'task' || !showEvents ? <>
                 <div className="notebook-input-line"><input aria-label="Task title" value={taskTitle} placeholder="write a task here…" onChange={(event) => setTaskTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') addTask() }} /><button aria-label="Add task" onClick={addTask}><span className="notebook-add-label">add</span><Plus className="size-4" /></button></div>
                 {taskHint && <p className="mt-2 text-[11px] text-muted-ink" role="status">{taskHint}</p>}
-                <div className="notebook-form-options">
-                  <label className="notebook-form-field" htmlFor="task-subject"><span>subject</span><select id="task-subject" aria-label="Task subject" value={taskSubject} onChange={(event) => setTaskSubject(event.target.value)}>{subjects.map((subject) => <option key={subject}>{subject}</option>)}</select></label>
+                <div className="notebook-deadline-row">
                   <label className="notebook-form-field deadline-field" htmlFor="task-deadline"><span>deadline</span><input id="task-deadline" aria-label="Task deadline" type="date" value={taskDue} onChange={(event) => setTaskDue(event.target.value)} /></label>
+                  <button type="button" className="notebook-details-toggle" aria-expanded={showTaskDetails} onClick={() => setShowTaskDetails((value) => !value)}>{showTaskDetails ? 'hide details' : '+ optional details'}</button>
+                </div>
+                {showTaskDetails && <div className="notebook-form-options notebook-optional-options">
+                  <label className="notebook-form-field" htmlFor="task-subject"><span>subject</span><select id="task-subject" aria-label="Task subject" value={taskSubject} onChange={(event) => setTaskSubject(event.target.value)}>{subjects.map((subject) => <option key={subject}>{subject}</option>)}</select></label>
                   <label className="notebook-form-field" htmlFor="task-priority"><span>priority</span><select id="task-priority" aria-label="Task priority" value={taskPriority} onChange={(event) => setTaskPriority(Number(event.target.value) as TaskPriority)}><option value={1}>1</option><option value={2}>2</option><option value={3}>3</option></select></label>
                   <label className="notebook-form-field" htmlFor="task-estimate"><span>estimate</span><input id="task-estimate" aria-label="Estimated minutes" type="number" min="5" step="5" value={taskMinutes} onChange={(event) => setTaskMinutes(Math.max(5, Number(event.target.value)))} /></label>
-                </div>
-                <p className="notebook-form-hint">Set the deadline first, then add any optional planning details.</p>
+                </div>}
+                <p className="notebook-form-hint">Name it, set the date, and move on. Koko can use General when no subject is chosen.</p>
               </> : <>
                 <div className="notebook-input-line"><input aria-label="Event title" value={eventTitle} placeholder="competition, project, exam…" onChange={(event) => setEventTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') addEvent() }} /><button aria-label="Add important date" onClick={addEvent}><Plus className="size-4" /></button></div>
                 <div className="notebook-form-options event-options"><input aria-label="Event date" type="date" value={eventDate} onChange={(event) => setEventDate(event.target.value)} /><select aria-label="Event type" value={eventType} onChange={(event) => setEventType(event.target.value as PlannerEventType)}>{Object.entries(eventLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>
@@ -355,7 +407,7 @@ export function TaskNotebook({
                   <span className="swapped-date-number">{String(index + 1).padStart(2, '0')}</span>
                   <span className="swapped-date-calendar"><strong>{new Date(`${event.eventDate}T00:00:00`).getDate()}</strong><small>{new Date(`${event.eventDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short' })}</small></span>
                   <div className="lined-task-copy"><strong>{event.title}</strong><span>{eventLabels[event.type]} · {formatDate(event.eventDate)}</span>{event.sourceWorkspaceName && <small className="workspace-item-source">from {event.sourceWorkspaceName}</small>}</div>
-                  {!event.sourceWorkspaceId && <button aria-label={`Delete ${event.title}`} className="notebook-delete swapped-date-delete" onClick={() => deleteEvent(event.id)}><Trash2 className="size-3.5" /></button>}
+                  {!event.sourceWorkspaceId && <><button aria-label={`Edit ${event.title}`} className="notebook-delete notebook-edit" onClick={() => openEventEditor(event)}><Pencil className="size-3.5" /></button><button aria-label={`Delete ${event.title}`} className="notebook-delete swapped-date-delete" onClick={() => deleteEvent(event.id)}><Trash2 className="size-3.5" /></button></>}
                 </div>) : <div className="notebook-empty"><CalendarDays className="size-5" /><span>no important dates yet — add one above.</span></div>}
               </div>
               <div className="task-paper-footer"><span>{data.events.length} dates saved</span><span>keep the moments that matter close ♡</span></div>
@@ -366,7 +418,7 @@ export function TaskNotebook({
                   <span className="lined-task-number">{String(index + 1).padStart(2, '0')}</span>
                   <div className="lined-task-copy"><strong>{task.title}</strong><span>{task.subject} · {task.estimatedMinutes}m · {task.dueDate ? formatDate(task.dueDate) : 'no deadline'}</span>{task.sourceWorkspaceName && <small className="workspace-item-source">from {task.sourceWorkspaceName}</small>}</div>
                   {task.sourceWorkspaceName ? <span className="notebook-source-tag">shared</span> : <span className={`notebook-priority notebook-rhythm-tag ${rhythmRoleForSubject(task.subject, rhythmPlan)} priority-${task.priority}`}>{rhythmRoleForSubject(task.subject, rhythmPlan) === 'unassigned' ? `P${task.priority}` : rhythmRoleForSubject(task.subject, rhythmPlan)}</span>}
-                  {!task.sourceWorkspaceId && <button aria-label={`Delete ${task.title}`} className="notebook-delete" onClick={() => deleteTask(task.id)}><Trash2 className="size-3.5" /></button>}
+                  {!task.sourceWorkspaceId && <><button aria-label={`Edit ${task.title}`} className="notebook-delete notebook-edit" onClick={() => openTaskEditor(task)}><Pencil className="size-3.5" /></button><button aria-label={`Delete ${task.title}`} className="notebook-delete" onClick={() => deleteTask(task.id)}><Trash2 className="size-3.5" /></button></>}
                 </div>) : <div className="notebook-empty"><ListChecks className="size-5" /><span>your page is clear — add the next small thing.</span></div>}
               </div>
               <div className="task-paper-footer"><span>{data.tasks.filter((task) => task.completed).length} completed</span><span>{openTasks.length > 8 ? `+ ${openTasks.length - 8} more` : 'keep going, gently ♡'}</span></div>
@@ -401,8 +453,8 @@ export function TaskNotebook({
             const itemCount = dayEvents.length + dayTasks.length
             return <button type="button" key={dateKey} className={`notebook-calendar-day ${calendarEventDays.has(day) ? 'has-event' : ''} ${selectedDate === dateKey ? 'selected' : ''}`} onClick={() => selectCalendarDay(dateKey)}><span className="calendar-day-number">{day}</span>{dayEvents.slice(0, 1).map((event) => <small className="calendar-event-label" title={event.sourceWorkspaceName ? `from ${event.sourceWorkspaceName}` : event.title} key={event.id}>{event.sourceWorkspaceId ? '↗ ' : ''}{shortCalendarTitle(event.title)}</small>)}{dayTasks.slice(0, 2).map((task) => <small className={`calendar-task-label ${task.completed ? 'completed' : ''}`} title={task.sourceWorkspaceName ? `from ${task.sourceWorkspaceName}` : task.title} key={task.id}>+ {task.sourceWorkspaceId ? '↗ ' : ''}{shortCalendarTitle(task.title)}</small>)}{itemCount > 3 && <small className="calendar-more-label">+{itemCount - 3} more</small>}</button>
           })}</div>
-          <div className="selected-date-details" aria-live="polite">{selectedDate ? <><div className="selected-date-heading"><div><p className="eyebrow">selected day</p><strong>{formatDate(selectedDate)}</strong></div><span>{selectedEvents.length + selectedTasks.length} items</span></div>{selectedEvents.length || selectedTasks.length ? <div className="selected-date-list">{selectedEvents.map((event) => <div className="selected-date-item event-detail" key={event.id}><CalendarDays className="size-3.5" /><div><strong>{event.title}</strong><span>{eventLabels[event.type]}</span>{event.sourceWorkspaceName && <small className="workspace-item-source">from {event.sourceWorkspaceName}</small>}</div></div>)}{selectedTasks.map((task) => <div className={`selected-date-item task-detail ${task.completed ? 'completed' : ''}`} key={task.id}><ListChecks className="size-3.5" /><div><strong>+ {task.title}</strong><span>{task.subject} · {task.completed ? 'completed' : `${task.estimatedMinutes}m · priority ${task.priority}`}</span>{task.sourceWorkspaceName && <small className="workspace-item-source">from {task.sourceWorkspaceName}</small>}</div></div>)}</div> : <p className="selected-date-empty">nothing planned yet — a lovely blank page.</p>}</> : <p className="selected-date-empty">tap any day to see what&apos;s happening there.</p>}</div>
-          <div className="notebook-event-list">{upcomingEvents.length ? upcomingEvents.map((event: PlannerEvent) => <div className="notebook-event-item" key={event.id}><CalendarDays className="size-4" /><div><strong>{event.title}</strong><span>{formatDate(event.eventDate)} · {eventLabels[event.type]}</span>{event.sourceWorkspaceName && <small className="workspace-item-source">from {event.sourceWorkspaceName}</small>}</div>{captureType !== 'event' && !event.sourceWorkspaceId && <button aria-label={`Delete ${event.title}`} className="notebook-delete" onClick={() => deleteEvent(event.id)}><Trash2 className="size-3.5" /></button>}</div>) : <p className="notebook-event-empty">add the dates future-you should remember.</p>}</div>
+          <div className="selected-date-details" aria-live="polite">{selectedDate ? <><div className="selected-date-heading"><div><p className="eyebrow">selected day</p><strong>{formatDate(selectedDate)}</strong></div><span>{selectedEvents.length + selectedTasks.length} items</span></div>{selectedEvents.length || selectedTasks.length ? <div className="selected-date-list">{selectedEvents.map((event) => <div className="selected-date-item event-detail" key={event.id}><CalendarDays className="size-3.5" /><div><strong>{event.title}</strong><span>{eventLabels[event.type]}</span>{event.sourceWorkspaceName && <small className="workspace-item-source">from {event.sourceWorkspaceName}</small>}</div>{!event.sourceWorkspaceId && <button type="button" className="notebook-inline-edit" onClick={() => openEventEditor(event)} aria-label={`Edit ${event.title}`}><Pencil className="size-3.5" /></button>}</div>)}{selectedTasks.map((task) => <div className={`selected-date-item task-detail ${task.completed ? 'completed' : ''}`} key={task.id}><ListChecks className="size-3.5" /><div><strong>+ {task.title}</strong><span>{task.subject} · {task.completed ? 'completed' : `${task.estimatedMinutes}m · priority ${task.priority}`}</span>{task.sourceWorkspaceName && <small className="workspace-item-source">from {task.sourceWorkspaceName}</small>}</div>{!task.sourceWorkspaceId && <button type="button" className="notebook-inline-edit" onClick={() => openTaskEditor(task)} aria-label={`Edit ${task.title}`}><Pencil className="size-3.5" /></button>}</div>)}</div> : <p className="selected-date-empty">nothing planned yet — a lovely blank page.</p>}</> : <p className="selected-date-empty">tap any day to see what&apos;s happening there.</p>}</div>
+          <div className="notebook-event-list">{upcomingEvents.length ? upcomingEvents.map((event: PlannerEvent) => <div className="notebook-event-item" key={event.id}><CalendarDays className="size-4" /><div><strong>{event.title}</strong><span>{formatDate(event.eventDate)} · {eventLabels[event.type]}</span>{event.sourceWorkspaceName && <small className="workspace-item-source">from {event.sourceWorkspaceName}</small>}</div>{captureType !== 'event' && !event.sourceWorkspaceId && <><button aria-label={`Edit ${event.title}`} className="notebook-delete notebook-edit" onClick={() => openEventEditor(event)}><Pencil className="size-3.5" /></button><button aria-label={`Delete ${event.title}`} className="notebook-delete" onClick={() => deleteEvent(event.id)}><Trash2 className="size-3.5" /></button></>}</div>) : <p className="notebook-event-empty">add the dates future-you should remember.</p>}</div>
         </section>}
 
         <div className="task-notebook-lower-grid">
@@ -426,6 +478,21 @@ export function TaskNotebook({
         </section>
         <p className="notebook-caption">small steps every day <Flower2 className="size-4" /> big results <Heart className="size-4" /></p>
       </div>
+
+      {(editingTask || editingEvent) && <div className="planner-edit-overlay" role="presentation" onMouseDown={closeEditor}>
+        <section className="planner-edit-modal" role="dialog" aria-modal="true" aria-labelledby="planner-edit-heading" onMouseDown={(event) => event.stopPropagation()}>
+          <div className="planner-edit-heading"><div><p className="workspace-kicker">edit in your planner</p><h2 id="planner-edit-heading">{editingTask ? 'Edit task' : 'Edit important date'}</h2></div><button type="button" aria-label="Close editor" onClick={closeEditor}><X className="size-4" /></button></div>
+          <label><span>name</span><input autoFocus value={editTitle} onChange={(event) => setEditTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') saveEditor() }} /></label>
+          {editingTask ? <>
+            <div className="planner-edit-grid"><label><span>deadline</span><input type="date" value={editDate} onChange={(event) => setEditDate(event.target.value)} /></label><label><span>subject</span><select value={editSubject} onChange={(event) => setEditSubject(event.target.value)}>{Array.from(new Set(['General', ...subjects, editSubject])).map((subject) => <option key={subject} value={subject}>{subject}</option>)}</select></label></div>
+            <div className="planner-edit-grid"><label><span>priority</span><select value={editPriority} onChange={(event) => setEditPriority(Number(event.target.value) as TaskPriority)}><option value={1}>1 · low</option><option value={2}>2 · normal</option><option value={3}>3 · high</option></select></label><label><span>estimate</span><input type="number" min="5" max="480" step="5" value={editMinutes} onChange={(event) => setEditMinutes(Math.max(5, Number(event.target.value) || 5))} /></label></div>
+          </> : <>
+            <div className="planner-edit-grid"><label><span>date</span><input type="date" value={editDate} onChange={(event) => setEditDate(event.target.value)} /></label><label><span>type</span><select value={editEventType} onChange={(event) => setEditEventType(event.target.value as PlannerEventType)}>{Object.entries(eventLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></div>
+            <label><span>note</span><textarea value={editNotes} placeholder="optional detail…" onChange={(event) => setEditNotes(event.target.value)} /></label>
+          </>}
+          <div className="planner-edit-actions"><button type="button" onClick={closeEditor}>cancel</button><button type="button" className="save" disabled={!editTitle.trim() || !editDate} onClick={saveEditor}><Save className="size-3.5" /> save changes</button></div>
+        </section>
+      </div>}
 
       <LineConnectModal
         isOpen={isLineModalOpen}

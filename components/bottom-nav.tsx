@@ -8,7 +8,7 @@ const items = [
   { href: '/focus', label: 'Focus', icon: Clock3 },
   { href: '/planner', label: 'Planner', icon: ListTodo },
   { href: '/', label: 'Home', icon: LayoutDashboard },
-  { href: '/goals', label: 'Goals', icon: Target },
+  { href: '/goals', label: 'Rhythm', icon: Target },
   { href: '/stats', label: 'Stats', icon: BarChart3 },
 ]
 

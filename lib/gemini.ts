@@ -34,6 +34,26 @@ export type GeminiAnalysisResult = (
       aiComment?: string
     }
   | {
+      action: 'EDIT_TASK'
+      taskQuery: string
+      title?: string
+      subject?: string
+      dueDate?: string
+      clearDeadline?: boolean
+      priority?: 1 | 2 | 3
+      estimatedMinutes?: number
+      aiComment?: string
+    }
+  | {
+      action: 'EDIT_EVENT'
+      eventQuery: string
+      title?: string
+      eventDate?: string
+      type?: 'competition' | 'project' | 'exam' | 'important'
+      notes?: string
+      aiComment?: string
+    }
+  | {
       action: 'LIST_TODOS'
     }
   | {
@@ -94,11 +114,19 @@ CARDINALITY RULE: First count the independent things the student wants recorded.
 3. "COMPLETE_TASK": Student says they finished or completed a task (e.g. "ทำเลขเสร็จแล้ว", "อ่านชีวะจบแล้ว", "done math").
    - Extract: taskQuery (the keywords/name of the completed task).
 
-4. "LIST_TODOS": Student asks to see their tasks, homework, to-dos (e.g. "มีงานอะไรบ้าง", "ขอดูดิ", "list", "today").
+4. "EDIT_TASK": Student asks to change an existing personal task: its name, deadline, subject, priority, or estimated time.
+   - Extract taskQuery to identify the existing task, then include ONLY fields the student explicitly wants changed.
+   - Use clearDeadline=true only when they explicitly ask to remove/cancel the deadline.
+   - Example: "เลื่อนงานสไลด์ไปวันศุกร์" => taskQuery "งานสไลด์", dueDate Friday.
 
-5. "LIST_EVENTS": Student asks about upcoming exams, competitions, dates (e.g. "มีสอบวันไหนบ้าง", "มีนัดอะไรบ้าง", "events").
+5. "EDIT_EVENT": Student asks to change an existing important date: its name, date, type, or note.
+   - Extract eventQuery and include ONLY the fields explicitly requested.
 
-6. "ADD_BATCH": Student gives two or more distinct tasks/events in one message. Split every independent item instead of merging them.
+6. "LIST_TODOS": Student asks to see their tasks, homework, to-dos (e.g. "มีงานอะไรบ้าง", "ขอดูดิ", "list", "today").
+
+7. "LIST_EVENTS": Student asks about upcoming exams, competitions, dates (e.g. "มีสอบวันไหนบ้าง", "มีนัดอะไรบ้าง", "events").
+
+8. "ADD_BATCH": Student gives two or more distinct tasks/events in one message. Split every independent item instead of merging them.
    - Use kind "task" for homework, reading, revision, submissions, or actions the student must complete.
    - Use kind "event" for an exam, competition, appointment, or important date that is mainly a calendar marker.
    - A different subject, action, or deadline normally means a separate item.
@@ -107,12 +135,12 @@ CARDINALITY RULE: First count the independent things the student wants recorded.
    Example: "วันนี้มีเลขส่งศุกร์ อังกฤษท่องศัพท์พรุ่งนี้ แล้ววันจันทร์สอบชีวะ"
    => task งานเลข due Friday; task ท่องศัพท์อังกฤษ due tomorrow; event สอบชีวะ on Monday.
 
-7. "CHAT": General greeting, small talk, question, feeling stressed, asking for study motivation or tips.
+9. "CHAT": General greeting, small talk, question, feeling stressed, asking for study motivation or tips.
    - Extract: replyText (a warm, cozy, helpful, encouraging Thai reply with cute emojis).
 
 Respond strictly with valid JSON only conforming to this TypeScript schema:
 {
-  "action": "ADD_TODO" | "ADD_EVENT" | "ADD_BATCH" | "COMPLETE_TASK" | "LIST_TODOS" | "LIST_EVENTS" | "CHAT",
+  "action": "ADD_TODO" | "ADD_EVENT" | "ADD_BATCH" | "COMPLETE_TASK" | "EDIT_TASK" | "EDIT_EVENT" | "LIST_TODOS" | "LIST_EVENTS" | "CHAT",
   "items": [{
     "kind": "task" | "event",
     "title": string,
@@ -133,6 +161,14 @@ Respond strictly with valid JSON only conforming to this TypeScript schema:
   "type": "competition" | "project" | "exam" | "important" (if ADD_EVENT),
   "notes": string (if ADD_EVENT),
   "taskQuery": string (if COMPLETE_TASK),
+  "title": string (if EDIT_TASK or EDIT_EVENT and the name should change),
+  "subject": string (if EDIT_TASK and the subject should change),
+  "dueDate": "YYYY-MM-DD" (if EDIT_TASK and the deadline should change),
+  "priority": 1 | 2 | 3 (if EDIT_TASK and priority should change),
+  "estimatedMinutes": number (if EDIT_TASK and the estimate should change),
+  "eventQuery": string (if EDIT_EVENT),
+  "eventDate": "YYYY-MM-DD" (if EDIT_EVENT and the date should change),
+  "clearDeadline": boolean (if EDIT_TASK and the deadline should be removed),
  "aiComment": string (optional cute phrase),
   "replyText": string (if CHAT),
   "memoryProposal": { "kind": "preference" | "learning", "content": string } | null
@@ -226,6 +262,27 @@ function normalizeAnalysisResult(value: unknown, today: string): GeminiAnalysisR
       action: 'ADD_BATCH', items, aiComment: cleanText(result.aiComment, 'แยกให้เรียบร้อยแล้วครับ ✨'),
       memoryProposal: normalizeMemoryProposal(result.memoryProposal),
     }
+  }
+  if (result.action === 'EDIT_TASK') {
+    const taskQuery = cleanText(result.taskQuery, '', 160)
+    if (!taskQuery) return null
+    const priority = result.priority === 1 || result.priority === 2 || result.priority === 3 ? result.priority : undefined
+    const dueDate = typeof result.dueDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(result.dueDate) && !Number.isNaN(new Date(`${result.dueDate}T12:00:00`).getTime()) ? result.dueDate : undefined
+    const title = typeof result.title === 'string' && result.title.trim() ? cleanText(result.title, '', 180) : undefined
+    const subject = typeof result.subject === 'string' && result.subject.trim() ? cleanText(result.subject, '', 80) : undefined
+    const estimatedMinutes = Number.isFinite(Number(result.estimatedMinutes)) ? Math.min(480, Math.max(5, Math.round(Number(result.estimatedMinutes)))) : undefined
+    if (!title && !subject && !dueDate && result.clearDeadline !== true && !priority && !estimatedMinutes) return null
+    return { action: 'EDIT_TASK', taskQuery, ...(title ? { title } : {}), ...(subject ? { subject } : {}), ...(dueDate ? { dueDate } : {}), ...(result.clearDeadline === true ? { clearDeadline: true } : {}), ...(priority ? { priority } : {}), ...(estimatedMinutes ? { estimatedMinutes } : {}), aiComment: cleanText(result.aiComment, '') }
+  }
+  if (result.action === 'EDIT_EVENT') {
+    const eventQuery = cleanText(result.eventQuery, '', 160)
+    if (!eventQuery) return null
+    const eventDate = typeof result.eventDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(result.eventDate) && !Number.isNaN(new Date(`${result.eventDate}T12:00:00`).getTime()) ? result.eventDate : undefined
+    const title = typeof result.title === 'string' && result.title.trim() ? cleanText(result.title, '', 160) : undefined
+    const type = result.type === 'competition' || result.type === 'project' || result.type === 'exam' || result.type === 'important' ? result.type : undefined
+    const notes = typeof result.notes === 'string' ? cleanText(result.notes, '', 300) : undefined
+    if (!title && !eventDate && !type && notes === undefined) return null
+    return { action: 'EDIT_EVENT', eventQuery, ...(title ? { title } : {}), ...(eventDate ? { eventDate } : {}), ...(type ? { type } : {}), ...(notes !== undefined ? { notes } : {}), aiComment: cleanText(result.aiComment, '') }
   }
   return { ...result, memoryProposal: normalizeMemoryProposal(result.memoryProposal) } as GeminiAnalysisResult
 }

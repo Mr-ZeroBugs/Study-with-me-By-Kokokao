@@ -28,12 +28,9 @@ export type KokoRhythmPlan = {
 
 export type RhythmRole = 'major' | 'minor' | 'maintenance' | 'unassigned'
 
-const STORAGE_KEY = 'koko_rhythm_v1'
 export const RHYTHM_UPDATED_EVENT = 'koko-rhythm-updated'
-
-function storageKey(user?: User | null) {
-  return user?.id ? `${STORAGE_KEY}_${user.id}` : STORAGE_KEY
-}
+const planMemory = new Map<string, KokoRhythmPlan>()
+function storageKey(user?: User | null) { return user?.id ?? 'guest' }
 
 export function createRhythmId(prefix = 'rhythm') {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `${prefix}_${crypto.randomUUID()}`
@@ -121,24 +118,13 @@ function normalizePlan(value: unknown): KokoRhythmPlan | null {
 }
 
 export function loadKokoRhythmPlan(user?: User | null): KokoRhythmPlan | null {
-  if (typeof window === 'undefined') return null
-  try {
-    const raw = window.localStorage.getItem(storageKey(user))
-    return raw ? normalizePlan(JSON.parse(raw)) : null
-  } catch {
-    return null
-  }
+  return normalizePlan(planMemory.get(storageKey(user)))
 }
 
 export function saveKokoRhythmPlan(user: User | null | undefined, plan: KokoRhythmPlan) {
-  if (typeof window === 'undefined') return
   const next = { ...plan, updatedAt: new Date().toISOString() }
-  try {
-    window.localStorage.setItem(storageKey(user), JSON.stringify(next))
-    window.dispatchEvent(new CustomEvent(RHYTHM_UPDATED_EVENT, { detail: next }))
-  } catch (error) {
-    console.error('Failed to save Koko Rhythm plan:', error)
-  }
+  planMemory.set(storageKey(user), next)
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(RHYTHM_UPDATED_EVENT, { detail: next }))
 }
 
 export function rhythmRoleForSubject(subject: string, plan: KokoRhythmPlan | null | undefined): RhythmRole {
